@@ -628,7 +628,7 @@ _increase_stage(
     _disable_controlling(this);
     _set_event(this, EVENT_DISTORTION);
     _switch_stage_to(this, STAGE_REDUCE, FALSE);
-    target_rate = MIN(_RR(this) * .9, _TR_t1(this) * .9);
+    target_rate = MAX(_RR(this) * .85, _TR_t1(this));
     goto done;
   }
 
