@@ -29,6 +29,7 @@
 #include <string.h>
 #include "bintree.h"
 #include "mprtpspath.h"
+#include "rtpfecbuffer.h"
 
 #define THIS_READLOCK(this) g_rw_lock_reader_lock(&this->rwmutex)
 #define THIS_READUNLOCK(this) g_rw_lock_reader_unlock(&this->rwmutex)
@@ -60,13 +61,6 @@ GST_DEBUG_CATEGORY_STATIC (packetssndqueue_debug_category);
 
 G_DEFINE_TYPE (PacketsSndQueue, packetssndqueue, G_TYPE_OBJECT);
 
-typedef enum{
-  PACING_DEACTIVE    = 0,
-  PACING_ACTIVATED   = 1,
-  PACING_ACTIVE      = 2,
-  PACING_DEACTIVATED = 3
-}PacingTypes;
-
 //----------------------------------------------------------------------
 //-------- Private functions belongs to Scheduler tree object ----------
 //----------------------------------------------------------------------
@@ -76,9 +70,7 @@ static void packetssndqueue_finalize (GObject * object);
 //#define _trash_node(this, node) g_slice_free(PacketsSndQueueNode, node)
 #define _trash_node(this, node) g_free(node)
 
-static void _packetssndqueue_add(PacketsSndQueue *this, GstBuffer* buffer);
-static GstBuffer * _packetssndqueue_rem(PacketsSndQueue *this);
-static void _logging(PacketsSndQueue *this);
+static void _logging(gpointer data);
 //----------------------------------------------------------------------
 //--------- Private functions implementations to SchTree object --------
 //----------------------------------------------------------------------
@@ -103,6 +95,7 @@ packetssndqueue_finalize (GObject * object)
   PacketsSndQueue *this;
   this = PACKETSSNDQUEUE(object);
   g_object_unref(this->sysclock);
+  g_object_unref(this->items);
 }
 
 void
@@ -110,16 +103,16 @@ packetssndqueue_init (PacketsSndQueue * this)
 {
   g_rw_lock_init (&this->rwmutex);
   this->sysclock = gst_system_clock_obtain();
-  this->obsolation_treshold = 400 * GST_MSECOND;
-  this->logging_interval = GST_SECOND;
+  this->obsolation_treshold = 0;
   this->incoming_bytes = make_numstracker(2048, GST_SECOND);
+  this->items = g_queue_new();
+  mprtp_logger_add_logging_fnc(_logging,this, 10, &this->rwmutex);
 }
 
 
 void packetssndqueue_reset(PacketsSndQueue *this)
 {
   THIS_WRITELOCK(this);
-  this->approved_bytes = 0;
   numstracker_reset(this->incoming_bytes);
   THIS_WRITEUNLOCK(this);
 }
@@ -143,31 +136,6 @@ PacketsSndQueue *make_packetssndqueue(void)
   return result;
 }
 
-void packetssndqueue_setup(PacketsSndQueue *this, gint32 target_bitrate, gboolean pacing)
-{
-  THIS_WRITELOCK(this);
-  target_bitrate>>=3;
-  this->target_rate = target_bitrate * .75;
-  if(!this->pacing && pacing){
-    this->approved_bytes = target_bitrate / 100;
-    this->pacing_started = _now(this);
-    this->pacing = TRUE;
-  }else if(!pacing && this->pacing){
-    this->pacing = _now(this) - this->pacing_started < 2 * GST_SECOND;
-  }
-
-  this->allowed_rate_per_ms = target_bitrate / 1000;
-  THIS_WRITEUNLOCK(this);
-}
-
-void packetssndqueue_approve(PacketsSndQueue *this)
-{
-  THIS_WRITELOCK(this);
-  if(this->pacing){
-    this->approved_bytes += this->allowed_rate_per_ms;
-  }
-  THIS_WRITEUNLOCK(this);
-}
 
 gint32 packetssndqueue_get_encoder_bitrate(PacketsSndQueue *this)
 {
@@ -187,114 +155,96 @@ gint32 packetssndqueue_get_bytes_in_queue(PacketsSndQueue *this)
   return result;
 }
 
-void packetssndqueue_push(PacketsSndQueue *this, GstBuffer *buffer)
+void packetssndqueue_set_obsolation_treshold(PacketsSndQueue *this, GstClockTime treshold)
 {
   THIS_WRITELOCK(this);
-  if(this->last_logging < _now(this) - this->logging_interval){
-    _logging(this);
-  }
-  _packetssndqueue_add(this, buffer);
+  this->obsolation_treshold = treshold;
+  THIS_WRITEUNLOCK(this);
+}
+
+GstClockTime packetssndqueue_get_obsolation_treshold(PacketsSndQueue *this)
+{
+  GstClockTime result;
+  THIS_READLOCK(this);
+  result = this->obsolation_treshold;
+  THIS_READUNLOCK(this);
+  return result;
+}
+
+void packetssndqueue_push(PacketsSndQueue *this, GstBuffer *buffer)
+{
+  GstRTPBuffer rtp = GST_RTP_BUFFER_INIT;
+  PacketsSndQueueItem *item;
+  THIS_WRITELOCK(this);
+  item = g_slice_new0(PacketsSndQueueItem);
+  item->added = _now(this);
+  item->buffer = gst_buffer_ref(buffer);
+
+  gst_rtp_buffer_map(buffer, GST_MAP_READ, &rtp);
+  item->size      = gst_rtp_buffer_get_payload_len(&rtp);
+  item->timestamp = gst_rtp_buffer_get_timestamp(&rtp);
+  gst_rtp_buffer_unmap(&rtp);
+
+  this->bytes+=item->size;
+  g_queue_push_tail(this->items, item);
   THIS_WRITEUNLOCK(this);
 }
 
 GstBuffer * packetssndqueue_pop(PacketsSndQueue *this)
 {
   GstBuffer *result = NULL;
+  PacketsSndQueueItem *item;
   THIS_WRITELOCK(this);
-again:
-  if(!this->counter){
-    goto done;
+  if(!g_queue_is_empty(this->items)){
+    item = g_queue_pop_head(this->items);
+    this->bytes-=item->size;
+    result = item->buffer;
+    g_slice_free(PacketsSndQueueItem, item);
   }
-  if(!this->pacing){
-    result = _packetssndqueue_rem(this);
-    goto done;
-  }
-  if(this->items[this->items_read_index].timestamp == this->last_timestamp){
-    this->approved_bytes -= this->items[this->items_read_index].size;
-    result = _packetssndqueue_rem(this);
-    goto done;
-  }
-  if(this->items[this->items_read_index].added < _now(this) - this->obsolation_treshold){
-      GstBuffer *buf;
-      buf = _packetssndqueue_rem(this);
-      GST_WARNING_OBJECT(this, "A buffer might be dropped due to obsolation");
-      gst_buffer_unref(buf);
-      this->expected_lost = TRUE;
-      goto again;
-  }
-  if(this->approved_bytes < this->items[this->items_read_index].size){
-    goto done;
-  }
-  this->last_timestamp  = this->items[this->items_read_index].timestamp;
-  this->approved_bytes -= this->items[this->items_read_index].size;
-  result = _packetssndqueue_rem(this);
-
-done:
-  //g_print("approved bytes: %d - counter: %d\n", this->approved_bytes, this->counter);
   THIS_WRITEUNLOCK(this);
   return result;
 }
 
-void _packetssndqueue_add(PacketsSndQueue *this, GstBuffer *buffer)
-{
-  this->items[this->items_write_index].added  = _now(this);
-  {
-    GstRTPBuffer rtp = GST_RTP_BUFFER_INIT;
-    guint payload_len;
-    gst_rtp_buffer_map(buffer, GST_MAP_READ, &rtp);
-    this->items[this->items_write_index].size = payload_len = gst_rtp_buffer_get_payload_len(&rtp);
-    this->items[this->items_write_index].timestamp = gst_rtp_buffer_get_timestamp(&rtp);
-    gst_rtp_buffer_unmap(&rtp);
-
-    numstracker_add(this->incoming_bytes, payload_len);
-  }
-  this->items[this->items_write_index].buffer = gst_buffer_ref(buffer);
-  ++this->counter;
-  this->bytes+=this->items[this->items_write_index].size;
-
-  if(++this->items_write_index == PACKETSSNDQUEUE_MAX_ITEMS_NUM){
-    this->items_write_index = 0;
-  }
-
-  if(this->items_write_index == this->items_read_index){
-    GstBuffer *buf;
-    buf = _packetssndqueue_rem(this);
-    if(buf){
-      GST_WARNING_OBJECT(this, "A buffer might be dropped due to queue fullness");
-      gst_buffer_unref(buf);
-      this->expected_lost = TRUE;
-    }
-  }
-  return;
-}
-
-GstBuffer * _packetssndqueue_rem(PacketsSndQueue *this)
+GstBuffer * packetssndqueue_peek(PacketsSndQueue *this)
 {
   GstBuffer *result = NULL;
-  result = this->items[this->items_read_index].buffer;
-  this->bytes-=this->items[this->items_read_index].size;
-
-  this->items[this->items_read_index].buffer = 0;
-  this->items[this->items_read_index].size = 0;
-  this->items[this->items_read_index].added = 0;
-  if(++this->items_read_index == PACKETSSNDQUEUE_MAX_ITEMS_NUM){
-    this->items_read_index = 0;
+  PacketsSndQueueItem *item;
+  THIS_WRITELOCK(this);
+again:
+  if(g_queue_is_empty(this->items)){
+    goto done;
   }
-  --this->counter;
+  item = g_queue_peek_head(this->items);
+  if(0 < this->obsolation_treshold && item->added < _now(this) - this->obsolation_treshold){
+    item = g_queue_pop_head(this->items);
+    this->bytes-=item->size;
+    gst_buffer_unref(item->buffer);
+    g_slice_free(PacketsSndQueueItem, item);
+    this->expected_lost = TRUE;
+    goto again;
+  }
+  result = item->buffer;
+done:
+  THIS_WRITEUNLOCK(this);
   return result;
 }
 
-void _logging(PacketsSndQueue *this)
+void _logging(gpointer data)
 {
+  PacketsSndQueue *this = data;
   mprtp_logger("packetssnqueue.log",
                "----------------------------------------------------\n"
-               "Seconds: %lu, pacing: %d, approved bytes: %d\n"
-               "packets in queue: %d bytes in queue: %d\n",
-               GST_TIME_AS_SECONDS(_now(this) - this->made), this->pacing, this->approved_bytes,
+               "Seconds: %lu\n"
+               "bytes in queue: %d \n"
+               "packets in queue: %d \n",
 
-               this->counter, this->bytes
+               GST_TIME_AS_SECONDS(_now(this) - this->made),
+
+               this->bytes,
+               g_queue_get_length(this->items)
+
                );
-  this->last_logging = _now(this);
+
 }
 
 

@@ -39,14 +39,24 @@
 #define THIS_WRITELOCK(this) g_rw_lock_writer_lock(&this->rwmutex)
 #define THIS_WRITEUNLOCK(this) g_rw_lock_writer_unlock(&this->rwmutex)
 
+#define LIST_READLOCK g_rw_lock_reader_lock(&list_mutex)
+#define LIST_READUNLOCK g_rw_lock_reader_unlock(&list_mutex)
+#define LIST_WRITELOCK g_rw_lock_writer_lock(&list_mutex)
+#define LIST_WRITEUNLOCK g_rw_lock_writer_unlock(&list_mutex)
+
 #define DATABED_LENGTH 1400
 
 GST_DEBUG_CATEGORY_STATIC (mprtp_logger_debug_category);
 #define GST_CAT_DEFAULT mprtp_logger_debug_category
 
+#define _now(this) (gst_clock_get_time (this->sysclock))
+
 G_DEFINE_TYPE (MPRTPLogger, mprtp_logger, G_TYPE_OBJECT);
 
-static MPRTPLogger *this = NULL;
+static MPRTPLogger *loggerptr = NULL;
+static GRWLock list_mutex;
+static GList* subscriptions = NULL;
+static GstClock*  listclock = NULL;
 //----------------------------------------------------------------------
 //-------- Private functions belongs to Scheduler tree object ----------
 //----------------------------------------------------------------------
@@ -54,6 +64,8 @@ static MPRTPLogger *this = NULL;
 static void
 mprtp_logger_finalize (GObject * object);
 
+static void
+_logging_process(void *data);
 
 //----------------------------------------------------------------------
 //--------- Private functions implementations to SchTree object --------
@@ -103,14 +115,18 @@ mprtp_logger_finalize (GObject * object)
 {
   MPRTPLogger *this = MPRTPLOGGER (object);
   g_object_unref (this->sysclock);
+  g_object_unref(listclock);
+  g_list_free_full(subscriptions, mprtp_free);
 }
 
 void
 mprtp_logger_init (MPRTPLogger * this)
 {
   g_rw_lock_init (&this->rwmutex);
+  g_rw_lock_init (&list_mutex);
   this->enabled    = FALSE;
   this->sysclock   = gst_system_clock_obtain ();
+  listclock        = gst_system_clock_obtain ();
   strcpy(this->path, "logs/");
   this->touches    = g_hash_table_new(g_str_hash, g_str_equal);
 //  this->reserves   = g_hash_table_new(g_direct_hash, g_direct_equal);
@@ -118,39 +134,49 @@ mprtp_logger_init (MPRTPLogger * this)
 
 void init_mprtp_logger(void)
 {
-  if(this != NULL){
+  if(loggerptr != NULL){
     return;
   }
-  this = g_object_new(MPRTPLOGGER_TYPE, NULL);
+  loggerptr = g_object_new(MPRTPLOGGER_TYPE, NULL);
 }
 
 
 void enable_mprtp_logger(void)
 {
-  THIS_WRITELOCK(this);
-  this->enabled = TRUE;
-  THIS_WRITEUNLOCK(this);
+  THIS_WRITELOCK(loggerptr);
+  loggerptr->enabled = TRUE;
+
+  loggerptr->thread = gst_task_new (_logging_process, loggerptr, NULL);
+  g_rec_mutex_init (&loggerptr->thread_mutex);
+  gst_task_set_lock (loggerptr->thread, &loggerptr->thread_mutex);
+  gst_task_start (loggerptr->thread);
+
+  THIS_WRITEUNLOCK(loggerptr);
 }
 
 void disable_mprtp_logger(void)
 {
-  THIS_WRITELOCK(this);
-  this->enabled = FALSE;
-  THIS_WRITEUNLOCK(this);
+  THIS_WRITELOCK(loggerptr);
+  loggerptr->enabled = FALSE;
+  if(loggerptr->thread && gst_task_get_state(loggerptr->thread) == GST_TASK_STARTED){
+    gst_task_stop (loggerptr->thread);
+    gst_task_join (loggerptr->thread);
+  }
+  THIS_WRITEUNLOCK(loggerptr);
 }
 
 void mprtp_logger_set_target_directory(const gchar *path)
 {
-  THIS_WRITELOCK(this);
-  strcpy(this->path, path);
-  THIS_WRITEUNLOCK(this);
+  THIS_WRITELOCK(loggerptr);
+  strcpy(loggerptr->path, path);
+  THIS_WRITEUNLOCK(loggerptr);
 }
 
 void mprtp_logger_get_target_directory(gchar* result)
 {
-  THIS_READLOCK(this);
-  strcpy(result, this->path);
-  THIS_READUNLOCK(this);
+  THIS_READLOCK(loggerptr);
+  strcpy(result, loggerptr->path);
+  THIS_READUNLOCK(loggerptr);
 }
 
 void mprtp_logger(const gchar *filename, const gchar * format, ...)
@@ -158,15 +184,15 @@ void mprtp_logger(const gchar *filename, const gchar * format, ...)
   FILE *file;
   va_list args;
   gchar writable[255];
-  THIS_WRITELOCK(this);
-  if(!this->enabled){
+  THIS_WRITELOCK(loggerptr);
+  if(!loggerptr->enabled){
     goto done;
   }
-  strcpy(writable, this->path);
+  strcpy(writable, loggerptr->path);
   strcat(writable, filename);
 //  strcpy(writable, filename);
-  if(!g_hash_table_lookup(this->touches, writable)){
-    g_hash_table_insert(this->touches, writable, writable);
+  if(!g_hash_table_lookup(loggerptr->touches, writable)){
+    g_hash_table_insert(loggerptr->touches, writable, writable);
     file = fopen(writable, "w");
   }else{
     file = fopen(writable, "a");
@@ -176,7 +202,131 @@ void mprtp_logger(const gchar *filename, const gchar * format, ...)
   va_end (args);
   fclose(file);
 done:
-  THIS_WRITEUNLOCK(this);
+  THIS_WRITEUNLOCK(loggerptr);
+}
+
+void mprtp_logger_rewrite(const gchar *filename, const gchar * format, ...)
+{
+  FILE *file;
+  va_list args;
+  gchar writable[255];
+  THIS_WRITELOCK(loggerptr);
+  if(!loggerptr->enabled){
+    goto done;
+  }
+  strcpy(writable, loggerptr->path);
+  strcat(writable, filename);
+//  strcpy(writable, filename);
+  if(!g_hash_table_lookup(loggerptr->touches, writable)){
+    g_hash_table_insert(loggerptr->touches, writable, writable);
+  }
+  file = fopen(writable, "w");
+  va_start (args, format);
+  vfprintf (file, format, args);
+  va_end (args);
+  fclose(file);
+done:
+  THIS_WRITEUNLOCK(loggerptr);
+}
+
+void mprtp_logger_open_collector(const gchar *filename)
+{
+  THIS_WRITELOCK(loggerptr);
+  if(!loggerptr->enabled){
+    goto done;
+  }
+  if(loggerptr->collector_string){
+    g_string_free(loggerptr->collector_string, TRUE);
+  }
+  loggerptr->collector_string = g_string_new(NULL);
+  strcpy(loggerptr->collector_filename, filename);
+done:
+  THIS_WRITEUNLOCK(loggerptr);
+}
+
+void mprtp_logger_close_collector(void)
+{
+  gchar *string = NULL;
+  gchar filename[255];
+  THIS_WRITELOCK(loggerptr);
+  if(!loggerptr->enabled){
+    goto done;
+  }
+  string = g_string_free(loggerptr->collector_string, FALSE);
+  loggerptr->collector_string = NULL;
+  memcpy(filename, loggerptr->collector_filename, 255);
+  memset(loggerptr->collector_filename, 0, 255);
+done:
+  THIS_WRITEUNLOCK(loggerptr);
+  if(string){
+    mprtp_logger(filename, "%s", string);
+  }
+}
+
+void mprtp_logger_collect(const gchar * format, ...)
+{
+  va_list args;
+  THIS_WRITELOCK(loggerptr);
+  if(!loggerptr->enabled){
+    goto done;
+  }
+  va_start (args, format);
+  g_string_append_vprintf(loggerptr->collector_string, format, args);
+  va_end (args);
+done:
+  THIS_WRITEUNLOCK(loggerptr);
+
+}
+
+typedef struct{
+  void      (*logging_fnc)(gpointer);
+  gpointer    data;
+  guint       tick_th;
+  guint       tick_count;
+  GRWLock*    rwmutex;
+}Subscription;
+
+
+void mprtp_logger_add_logging_fnc(void(*logging_fnc)(gpointer),gpointer data, guint tick_th, GRWLock *rwmutex)
+{
+  Subscription *subscription;
+  LIST_WRITELOCK;
+  subscription = mprtp_malloc(sizeof(Subscription));
+  subscription->logging_fnc = logging_fnc;
+  subscription->data = data;
+  subscription->tick_th = tick_th;
+  subscription->rwmutex = rwmutex;
+  subscriptions = g_list_prepend(subscriptions, subscription);
+  LIST_WRITEUNLOCK;
+}
+
+void _logging_process(void *data)
+{
+  GstClockTime next_scheduler_time;
+  GstClockID clock_id;
+  GList *it;
+  Subscription *subscription;
+  LIST_WRITELOCK;
+
+  for(it = subscriptions; it; it = it->next){
+      subscription = it->data;
+      if(++subscription->tick_count < subscription->tick_th){
+        continue;
+      }
+      subscription->tick_count=0;
+      g_rw_lock_writer_lock(subscription->rwmutex);
+      subscription->logging_fnc(subscription->data);
+      g_rw_lock_writer_unlock(subscription->rwmutex);
+  }
+
+  next_scheduler_time = gst_clock_get_time (listclock) + 100 * GST_MSECOND;
+  LIST_WRITEUNLOCK;
+  clock_id = gst_clock_new_single_shot_id (loggerptr->sysclock, next_scheduler_time);
+
+  if (gst_clock_id_wait (clock_id, NULL) == GST_CLOCK_UNSCHEDULED) {
+    GST_WARNING_OBJECT (loggerptr, "The clock wait is interrupted");
+  }
+  gst_clock_id_unref (clock_id);
 }
 
 #undef MAX_RIPORT_INTERVAL

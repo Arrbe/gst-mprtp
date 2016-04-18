@@ -27,6 +27,7 @@
 #include <gst/net/gstnetaddressmeta.h>
 #include "gstmprtpbuffer.h"
 #include "rcvctrler.h"
+#include "fecdec.h"
 
 #if GLIB_CHECK_VERSION (2, 35, 7)
 #include <gio/gnetworking.h>
@@ -68,10 +69,9 @@ struct _GstMprtpplayouter
   guint8          abs_time_ext_header_id;
   guint32         pivot_ssrc;
   guint32         pivot_clock_rate;
-  GstClockTime    delay_offset;
   GSocketAddress *pivot_address;
   guint8          pivot_address_subflow_id;
-  guint8          monitor_payload_type;
+  guint8          fec_payload_type;
   guint64         clock_base;
   gboolean        auto_rate_and_cc;
   gboolean        rtp_passthrough;
@@ -82,24 +82,24 @@ struct _GstMprtpplayouter
   GstPad*         mprtcp_sr_sinkpad;
   GstPad*         mprtcp_rr_srcpad;
 
-  guint           lost_latency;
-  guint           discard_latency;
+
+  GstClockTime    repair_window_max;
+  GstClockTime    repair_window_min;
 
   GHashTable*     paths;
+  PacketsRcvQueue* rcvqueue;
   StreamJoiner*   joiner;
   gboolean          logging;
   RcvController*    controller;
   GstClock*       sysclock;
-//  GQueue*         mprtp_buffer_pool;
-//  PointerPool*    mprtp_buffer_pool;
 
   guint           subflows_num;
-
-//  void          (*controller_add_path) (gpointer, guint8, MpRTPRPath *);
-//  void          (*controller_rem_path) (gpointer, guint8);
-//  void          (*mprtcp_receiver) (gpointer, GstBuffer *);
-//  void          (*riport_can_flow) (gpointer);
+  FECDecoder*     fec_decoder;
+  GstClockTime    last_fec_clean;
+  guint16         expected_seq;
+  gboolean        expected_seq_init;
   guint32         rtcp_sent_octet_sum;
+  GstClockTime    playout_point;
 
   GstTask*                      thread;
   GRecMutex                     thread_mutex;

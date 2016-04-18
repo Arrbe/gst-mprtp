@@ -17,6 +17,7 @@
 #include "streamsplitter.h"
 #include "reportprod.h"
 #include "reportproc.h"
+#include "fecdec.h"
 
 typedef struct _RcvController RcvController;
 typedef struct _RcvControllerClass RcvControllerClass;
@@ -38,20 +39,24 @@ struct _RcvController
 
   GHashTable*       subflows;
   GRWLock           rwmutex;
+  GstClockTime      made;
   GstClock*         sysclock;
   StreamJoiner*     joiner;
   guint32           ssrc;
   void            (*send_mprtcp_packet_func)(gpointer,GstBuffer*);
   gpointer          send_mprtcp_packet_data;
   gboolean          report_is_flowable;
-  gboolean          rfc7097_enabled;
-  gboolean          rfc7243_enabled;
-  gboolean          rfc3611_enabled;
+
   ReportProducer*   report_producer;
   ReportProcessor*  report_processor;
-  gboolean          enabled;
 
+  FECDecoder*       fecdecoder;
+  gpointer          fec_early_repaired_bytes;
+  gpointer          fec_total_repaired_bytes;
+  gdouble           FFRE;
+  guint             orp_tick;
 
+  GstMPRTCPReportSummary reports_summary;
 };
 
 struct _RcvControllerClass{
@@ -62,7 +67,21 @@ struct _RcvControllerClass{
 
 //Class functions
 void rcvctrler_setup(RcvController *this,
-                     StreamJoiner* splitter);
+                     StreamJoiner* splitter,
+                     FECDecoder*   fecdecoder);
+
+void
+rcvctrler_change_interval_type(
+    RcvController * this,
+    guint8 subflow_id,
+    guint type);
+
+
+void
+rcvctrler_change_controlling_mode(
+    RcvController * this,
+    guint8 subflow_id,
+    guint controlling_mode);
 
 void
 rcvctrler_add_path (
@@ -90,13 +109,6 @@ rcvctrler_setup_callbacks(RcvController * this,
                           gpointer mprtcp_send_data,
                           GstBufferReceiverFunc mprtcp_send_func);
 
-
-void
-rcvctrler_set_additional_reports(RcvController * this,
-                          gboolean rfc3611_reports,
-                          gboolean rfc7097_reports,
-                          gboolean rfc7243_reports
-                          );
 
 
 GType rcvctrler_get_type (void);

@@ -28,12 +28,20 @@
 #include <math.h>
 #include <gst/gst.h>
 #include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include "mprtplogger.h"
 
 
 GST_DEBUG_CATEGORY_STATIC (ricalcer_debug_category);
 #define GST_CAT_DEFAULT ricalcer_debug_category
 
 #define _now(this) (gst_clock_get_time (this->sysclock))
+
+#define THIS_READLOCK(this) g_rw_lock_reader_lock(&this->rwmutex)
+#define THIS_READUNLOCK(this) g_rw_lock_reader_unlock(&this->rwmutex)
+#define THIS_WRITELOCK(this) g_rw_lock_writer_lock(&this->rwmutex)
+#define THIS_WRITEUNLOCK(this) g_rw_lock_writer_unlock(&this->rwmutex)
 
 G_DEFINE_TYPE (ReportIntervalCalculator, ricalcer, G_TYPE_OBJECT);
 
@@ -44,6 +52,8 @@ G_DEFINE_TYPE (ReportIntervalCalculator, ricalcer, G_TYPE_OBJECT);
 static void ricalcer_finalize (GObject * object);
 static gdouble _calc_report_interval(ReportIntervalCalculator * this);
 
+static gboolean _do_report_now (ReportIntervalCalculator * this);
+
 static gdouble
 _get_rtcp_interval (
     gint senders,
@@ -52,6 +62,8 @@ _get_rtcp_interval (
     gint we_sent,
     gdouble avg_rtcp_size,
     gint initial);
+
+static void _logging(gpointer data);
 
 //----------------------------------------------------------------------
 //--------- Private functions implementations to SchTree object --------
@@ -78,6 +90,37 @@ ricalcer_finalize (GObject * object)
   g_object_unref(this->sysclock);
 }
 
+void ricalcer_set_mode(ReportIntervalCalculator *this, RTCPIntervalMode mode)
+{
+  THIS_WRITELOCK(this);
+  this->mode = mode;
+  THIS_WRITEUNLOCK(this);
+}
+
+gboolean ricalcer_rtcp_regular_allowed(ReportIntervalCalculator * this)
+{
+  gboolean result;
+  THIS_WRITELOCK(this);
+  result = _do_report_now(this);
+  THIS_WRITEUNLOCK(this);
+  return result;
+}
+
+gboolean ricalcer_rtcp_fb_allowed(ReportIntervalCalculator * this)
+{
+  gboolean result;
+  THIS_WRITELOCK(this);
+  if(this->mode == RTCP_INTERVAL_IMMEDIATE_FEEDBACK_MODE){
+    result = TRUE;
+    goto done;
+  }
+  result = _do_report_now(this);
+done:
+  THIS_WRITEUNLOCK(this);
+  return result;
+}
+
+
 void
 ricalcer_init (ReportIntervalCalculator * this)
 {
@@ -89,7 +132,10 @@ ricalcer_init (ReportIntervalCalculator * this)
   this->max_interval = 1.5;
   this->base_interval = 1.5;
   this->min_interval = .5;
+  this->interval_spread = 1.;
   this->sysclock = gst_system_clock_obtain();
+  g_rw_lock_init (&this->rwmutex);
+  mprtp_logger_add_logging_fnc(_logging, this, 10, &this->rwmutex);
 }
 
 ReportIntervalCalculator *make_ricalcer(gboolean sender_side)
@@ -100,82 +146,70 @@ ReportIntervalCalculator *make_ricalcer(gboolean sender_side)
   return result;
 }
 
-
-//
-//gboolean ricalcer_do_report_now (ReportIntervalCalculator * this)
-//{
-//  gboolean result = FALSE;
-//  GstClockTime now;
-//
-//  now = gst_clock_get_time (this->sysclock);
-//  if (!this->initialized) {
-//    this->urgent = TRUE;
-//    this->actual_interval = (GstClockTime)_calc_report_interval(this) * GST_SECOND;
-//    this->next_time = now + this->actual_interval;
-//    this->initialized = TRUE;
-//    goto done;
-//  }
-//  if (this->urgent && this->allow_early) {
-//    this->allow_early = FALSE;
-//    result = TRUE;
-//    goto done;
-//  }
-//
-//  if (now < this->next_time) {
-//    goto done;
-//  }
-//  this->allow_early = TRUE;
-//  result = TRUE;
-//done:
-//  return result;
-//}
-
-
-gboolean ricalcer_do_report_now (ReportIntervalCalculator * this)
+gboolean _do_report_now (ReportIntervalCalculator * this)
 {
   gboolean result = FALSE;
-  gdouble interval;
+
   if (!this->initialized) {
-    this->urgent = TRUE;
     this->actual_interval = (GstClockTime)(_calc_report_interval(this) * (gdouble)GST_SECOND);
     this->next_time = _now(this) + this->actual_interval;
     this->initialized = TRUE;
     goto done;
   }
-  if (this->urgent && this->allow_early) {
-    this->allow_early = FALSE;
+  if(this->mode == RTCP_INTERVAL_REGULAR_INTERVAL_MODE){
+    result = this->next_time <= _now(this);
+    if(result){
+      this->last_time = _now(this);
+      this->actual_interval = (GstClockTime)(_calc_report_interval(this) * (gdouble)GST_SECOND);
+      this->next_time = _now(this) + this->actual_interval;
+    }
+    goto done;
+  }
+  //early or immediate, do the same
+  if(this->urgent){
     this->urgent = FALSE;
-    result = TRUE;
-    goto done;
-  }else if(!this->urgent){
-    this->base_interval = MIN(this->max_interval, this->base_interval * 1.5);
+    if(this->allow_early){
+      result = TRUE;
+      this->allow_early = FALSE;
+      this->actual_interval = (GstClockTime)(_calc_report_interval(this) * (gdouble)GST_SECOND);
+      this->next_time = _now(this) + 2 * this->actual_interval;
+      this->interval_spread = MAX(1., this->interval_spread * .2);
+      goto done;
+    }
   }
-  if(_now(this) < this->next_time){
-    goto done;
+  result = this->next_time <= _now(this);
+  if(result){
+    gdouble actual_interval;
+    actual_interval = _calc_report_interval(this);
+    this->allow_early = TRUE;
+    this->last_time = _now(this);
+    this->actual_interval = (GstClockTime)((MIN(g_random_double_range(2.5, 7.5),
+                                                actual_interval * this->interval_spread) * (gdouble)GST_SECOND));
+    this->interval_spread = MIN(100., this->interval_spread * g_random_double_range(1., 2.));
+//    g_print("Actual Interval: %lu (%f)\n", this->actual_interval, this->interval_spread);
+    this->next_time = _now(this) + this->actual_interval;
   }
-  this->last_interval = this->actual_interval;
-  this->last_time = _now(this);
-  interval = this->base_interval * g_random_double() + .5;
-  this->actual_interval = interval * (gdouble)GST_SECOND;
-  this->next_time = _now(this) + this->actual_interval;
-  this->allow_early = TRUE;
-  result = TRUE;
 done:
   return result;
 }
 
 
 
-void ricalcer_refresh_parameters(ReportIntervalCalculator * this, gdouble media_rate, gdouble avg_rtcp_size)
+void ricalcer_refresh_parameters(ReportIntervalCalculator * this,
+                                 gdouble media_rate,
+                                 gdouble avg_rtcp_size)
 {
+  THIS_WRITELOCK(this);
   this->media_rate = media_rate;
   this->avg_rtcp_size = avg_rtcp_size;
+  THIS_WRITEUNLOCK(this);
 }
 
 void ricalcer_urgent_report_request(ReportIntervalCalculator * this)
 {
+  THIS_WRITELOCK(this);
   this->urgent = TRUE;
-  this->base_interval = MAX(this->min_interval, this->base_interval/2.);
+  THIS_WRITEUNLOCK(this);
 }
 
 gdouble _calc_report_interval(ReportIntervalCalculator * this)
@@ -185,10 +219,13 @@ gdouble _calc_report_interval(ReportIntervalCalculator * this)
       _get_rtcp_interval (
         1,                        //senders
         2,                        //members
-        this->media_rate,         //rtcp_bw
+        this->media_rate * .05,         //rtcp_bw
         this->sender_side?1:0,    //we_sent
         this->avg_rtcp_size,      //avg_rtcp_size
         this->initialized?0:1);       //initial
+
+
+
   return result;
 }
 
@@ -239,7 +276,10 @@ _get_rtcp_interval (gint senders,
 
    */
   if (initial) {
-    rtcp_min_time /= 2;
+//    rtcp_min_time /= 2;
+      rtcp_min_time = RTCP_MIN_TIME;
+  }else{
+      rtcp_min_time = 0.;
   }
   /*
    * Dedicate a fraction of the RTCP bandwidth to senders unless
@@ -280,3 +320,41 @@ _get_rtcp_interval (gint senders,
   return t;
 }
 
+
+void _logging(gpointer data)
+{
+  gchar logfile[255];
+  ReportIntervalCalculator *this;
+  this = data;
+
+  sprintf(logfile, "%s_ricalcer", this->sender_side ? "snd" : "rcv");
+
+  mprtp_logger(logfile,
+               "actual_interval: %lu\n"
+               "allow_early:     %d\n"
+               "avg_rtcp_size:   %f\n"
+               "base_interval:   %f\n"
+               "initialized:     %d\n"
+               "last_time:       %lu\n"
+               "media_rate:      %f\n"
+               "min_interval:    %f\n"
+               "mode:            %d\n"
+               "next_time:       %lu mseconds remain\n"
+               "urgent:          %d\n"
+               "#########################\n"
+               ,
+               this->actual_interval,
+               this->allow_early,
+               this->avg_rtcp_size,
+               this->base_interval,
+               this->initialized,
+               this->last_time,
+               this->media_rate,
+               this->min_interval,
+               this->mode,
+               GST_TIME_AS_MSECONDS(this->next_time - _now(this)),
+               this->urgent
+               );
+
+
+}

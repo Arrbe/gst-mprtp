@@ -30,13 +30,22 @@ struct _ReportProducer
 {
   GObject                  object;
   GRWLock                  rwmutex;
+  GstClockTime             made;
   GstClock*                sysclock;
   guint32                  ssrc;
   gpointer                 databed;
+  gchar                    logfile[255];
   GstMPRTCPSubflowReport*  report;
   GstMPRTCPSubflowBlock*   block;
   gpointer                 actual;
   gsize                    length;
+
+  struct{
+    GstRTCPXRBlock*          head_block;
+    gpointer                 actual_block;
+    gsize                    length;
+    gpointer                 databed;
+  }xr;
 };
 
 struct _ReportProducerClass{
@@ -44,6 +53,7 @@ struct _ReportProducerClass{
 };
 
 void report_producer_set_ssrc(ReportProducer *this, guint32 ssrc);
+void report_producer_set_logfile(ReportProducer *this, const gchar *logfile);
 
 void report_producer_begin(ReportProducer *this, guint8 subflow_id);
 
@@ -55,34 +65,34 @@ void report_producer_add_rr(ReportProducer *this,
                             guint32 LSR,
                             guint32 DLSR);
 
-void report_producer_add_xr_rfc7097(ReportProducer *this,
-                                    guint8 thinning,
-                                    guint16 begin_seq,
-                                    guint16 end_seq,
-                                    GstRTCPXR_Chunk *chunks,
-                                    guint chunks_num);
+void report_producer_add_xr_discarded_rle(ReportProducer *this,
+                                          gboolean early_bit,
+                                          guint8 thinning,
+                                          guint16 begin_seq,
+                                          guint16 end_seq,
+                                          GstRTCPXRChunk *chunks,
+                                          guint chunks_len);
 
-void report_producer_add_xr_owd_rle(ReportProducer *this,
-                                    guint8 thinning,
-                                    guint16 begin_seq,
-                                    guint16 end_seq,
-                                    GstRTCPXR_Chunk *chunks,
-                                    guint chunks_num);
-
-void report_producer_add_xr_rfc3611(ReportProducer *this,
-                                    guint8 thinning,
-                                    guint16 begin_seq,
-                                    guint16 end_seq,
-                                    GstRTCPXR_Chunk *chunks,
-                                    guint chunks_num);
-
-void report_producer_add_xr_rfc7243(ReportProducer *this,
-                                    guint32 late_discarded_bytes);
+void report_producer_add_xr_discarded_bytes(ReportProducer *this,
+                                    guint8 interval_metric_flag,
+                                    gboolean early_bit,
+                                    guint32 payload_bytes_discarded);
 
 void report_producer_add_xr_owd(ReportProducer *this,
+                                guint8 interval_metric_flag,
                                 guint32 median_delay,
                                 guint32 min_delay,
                                 guint32 max_delay);
+
+void report_producer_add_afb(ReportProducer *this,
+                                guint32 media_source_ssrc,
+                                guint32  fci_id,
+                                gpointer fci_dat,
+                                guint fci_dat_len);
+
+void report_producer_add_afb_rmdi(ReportProducer *this,
+                                  guint32 media_source_ssrc,
+                                  GstRTCPAFB_RMDIRecord *src_records);
 
 void report_producer_add_sr(ReportProducer *this,
                                 guint64 ntp_timestamp,

@@ -8,7 +8,6 @@ libgstmprtp_la_SOURCES = gstmprtpplugin.c           \
                          gstmprtpplayouter.c        \
                          gstmprtpreceiver.c         \
                          gstmprtpsender.c           \
-                         netqanalyser.c             \
                          mprtprpath.c               \
                          mprtpspath.c               \
                          streamjoiner.c             \
@@ -17,9 +16,9 @@ libgstmprtp_la_SOURCES = gstmprtpplugin.c           \
                          rcvctrler.c                \
                          bintree.c                  \
                          bintree2.c                 \
-                         monitorpackets.c           \
                          mprtplogger.c              \
                          packetssndqueue.c          \
+                         packetsrcvqueue.c          \
                          ricalcer.c                 \
                          reportproc.c               \
                          reportprod.c               \
@@ -27,22 +26,29 @@ libgstmprtp_la_SOURCES = gstmprtpplugin.c           \
                          percentiletracker2.c       \
                          sndratedistor.c            \
                          numstracker.c              \
-                         floatsbuffer.c             \
-                         subratectrler.c            
+                         fbrasubctrler.c            \
+                         screamsubctrler.c          \
+                         fecdec.c                   \
+                         fecenc.c                   \
+                         rtpfecbuffer.c             \
+                         packetssndtracker.c        \
+                         packetsrcvtracker.c        \
+                         rmdiproc.c                 \
+                         signalreport.c             \
+                         subratectrler.c
                     
                     
 noinst_HEADERS = mprtpspath.h           \
                  sndctrler.h            \
                  rcvctrler.c            \
                  mprtprpath.h           \
-                 netqanalyser.h         \
                  streamsplitter.h       \
                  streamjoiner.h         \
                  bintree.h              \
                  bintree2.h             \
-                 monitorpackets.h       \
                  mprtplogger.h          \
                  packetssndqueue.h      \
+                 packetsrcvqueue.h      \
                  ricalcer.h             \
                  reportproc.h           \
                  reportprod.h           \
@@ -50,8 +56,16 @@ noinst_HEADERS = mprtpspath.h           \
                  percentiletracker2.h   \
                  sndratedistor.h        \
                  numstracker.h          \
-                 floatsbuffer.h         \
-                 subratectrler.h        
+                 fbrasubctrler.h        \
+                 screamsubctrler.h      \
+                 fecdec.h               \
+                 fecenc.h               \
+                 rtpfecbuffer.h         \
+                 packetssndtracker.h    \
+                 packetsrcvtracker.h    \
+                 rmdiproc.c             \
+                 signalreport.h         \
+                 subratectrler.h
                           
 
 # compiler and linker flags used to compile this plugin, set in configure.ac

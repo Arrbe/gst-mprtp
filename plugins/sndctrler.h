@@ -18,7 +18,8 @@
 #include "streamsplitter.h"
 #include "reportprod.h"
 #include "reportproc.h"
-
+#include "fecenc.h"
+#include "signalreport.h"
 
 typedef struct _SndController SndController;
 typedef struct _SndControllerClass SndControllerClass;
@@ -42,12 +43,9 @@ struct _SndController
   GRecMutex                  thread_mutex;
   GHashTable*                subflows;
   GRWLock                    rwmutex;
-  StreamSplitter*            splitter;
-  PacketsSndQueue*           pacer;
   ReportProcessor*           report_processor;
   ReportProducer*            report_producer;
   GstClock*                  sysclock;
-  SendingRateDistributor*    rate_distor;
   GstClockTime               expected_lost_detected;
   guint64                    ticknum;
   guint                      subflow_num;
@@ -57,7 +55,18 @@ struct _SndController
   gpointer                   send_mprtcp_packet_data;
   GstSchedulerSignaling      utilization_signal_func;
   gpointer                   utilization_signal_data;
-  gboolean                   enabled;
+  MPRTPPluginSignalData*     mprtp_signal_data;
+
+  FECEncoder*                fecencoder;
+  guint32                    fec_sum_bitrate;
+  guint32                    fec_sum_packetsrate;
+
+  gint32                     target_bitrate_t1;
+  gint32                     target_bitrate;
+
+  SendingRateDistributor*    sndratedistor;
+
+  GstMPRTCPReportSummary     reports_summary;
 };
 
 struct _SndControllerClass{
@@ -70,7 +79,8 @@ struct _SndControllerClass{
 //Class functions
 void sndctrler_setup(SndController* this,
                      StreamSplitter* splitter,
-                     PacketsSndQueue *pacer);
+                     SendingRateDistributor *pacer,
+                     FECEncoder* fecencoder);
 
 void
 sndctrler_setup_callbacks(SndController *this,
@@ -80,7 +90,23 @@ sndctrler_setup_callbacks(SndController *this,
                           GstSchedulerSignaling utilization_signal_func);
 
 void
-sndctrler_set_initial_disabling(SndController *this, GstClockTime time);
+sndctrler_change_interval_type(
+    SndController * this,
+    guint8 subflow_id,
+    guint type);
+
+void
+sndctrler_change_controlling_mode(
+    SndController * this,
+    guint8 subflow_id,
+    guint mode,
+    gboolean *fec_enable);
+
+void sndctrler_setup_report_timeout(
+    SndController * this,
+    guint8 subflow_id,
+    GstClockTime report_timeout);
+
 void
 sndctrler_rem_path (SndController *controller_ptr, guint8 subflow_id);
 void
@@ -88,9 +114,6 @@ sndctrler_add_path (SndController *controller_ptr, guint8 subflow_id, MPRTPSPath
 void
 sndctrler_report_can_flow (SndController *this);
 void sndctrler_receive_mprtcp (SndController *this,GstBuffer * buf);
-
-void sndctrler_enable_auto_rate_and_cc(SndController *this);
-void sndctrler_disable_auto_rate_and_cc(SndController *this);
 
 void
 sndctrler_setup_siganling(gpointer ptr,

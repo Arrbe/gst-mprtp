@@ -23,11 +23,11 @@
 #include <gst/gst.h>
 
 #include "gstmprtcpbuffer.h"
-#include "monitorpackets.h"
 #include "mprtpspath.h"
 #include "sndctrler.h"
 #include "streamsplitter.h"
 #include "mprtplogger.h"
+#include "fecenc.h"
 
 G_BEGIN_DECLS
 #define GST_TYPE_MPRTPSCHEDULER   (gst_mprtpscheduler_get_type())
@@ -46,24 +46,21 @@ typedef struct _GstMprtpschedulerPrivate GstMprtpschedulerPrivate;
 struct _GstMprtpscheduler
 {
   GstElement                    base_object;
-
+  GRWLock                       rwmutex;
   GstPad*                       rtp_sinkpad;
   GstPad*                       mprtp_srcpad;
-  //GstPad        *rtcp_sinkpad;
-  //GstPad        *rtcp_srcpad;
   GstPad*                       mprtcp_rr_sinkpad;
   GstPad*                       mprtcp_sr_srcpad;
 
   guint8                        mprtp_ext_header_id;
   guint8                        abs_time_ext_header_id;
   guint32                       ssrc_filter;
-  guint                         auto_rate_and_cc;
-  MonitorPackets*               monitorpackets;
+  gboolean                      enable_fec;
   PacketsSndQueue*              sndqueue;
   GHashTable*                   paths;
-  GRWLock                       rwmutex;
   StreamSplitter*               splitter;
   SndController*                controller;
+  SendingRateDistributor*       sndrates;
   gboolean                      logging;
   gboolean                      riport_flow_signal_sent;
   guint                         active_subflows_num;
@@ -71,7 +68,7 @@ struct _GstMprtpscheduler
   GstSegment                    segment;
   GstClockTime                  position_out;
 
-  guint8                        monitor_payload_type;
+  guint8                        fec_payload_type;
 
   GstClock*                     sysclock;
 
@@ -79,6 +76,9 @@ struct _GstMprtpscheduler
 
   GstTask*                      thread;
   GRecMutex                     thread_mutex;
+  FECEncoder*                   fec_encoder;
+  guint32                       fec_interval;
+  guint32                       sent_packets;
 
   GstMprtpschedulerPrivate*     priv;
 };

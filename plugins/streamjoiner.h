@@ -9,12 +9,12 @@
 #define STREAM_JOINER_H_
 
 #include <gst/gst.h>
+#include "packetsrcvqueue.h"
 
 typedef struct _StreamJoiner StreamJoiner;
 typedef struct _StreamJoinerClass StreamJoinerClass;
 
 #include "mprtprpath.h"
-#include "monitorpackets.h"
 
 #define STREAM_JOINER_TYPE             (stream_joiner_get_type())
 #define STREAM_JOINER(src)             (G_TYPE_CHECK_INSTANCE_CAST((src),STREAM_JOINER_TYPE,StreamJoiner))
@@ -33,37 +33,24 @@ typedef struct _Frame Frame;
 struct _StreamJoiner
 {
   GObject              object;
+  GstClock*            sysclock;
   GstClockTime         made;
   GHashTable*          subflows;
-  GRWLock              rwmutex;
-  guint8               monitor_payload_type;
-  gboolean             playout_allowed;
-  gboolean             playout_halt;
-  GstClockTime         playout_halt_time;
-  gint32               monitored_bytes;
-  GstClockTime         stream_delay;
   gint                 subflow_num;
-  GstClock*            sysclock;
-  gdouble              playout_delay;
-  NumsTracker*         skews;
-  gint64               max_skew;
-  GstClockTime         forced_delay;
-  Frame*               head;
-  Frame*               tail;
-  guint16              PHSN;
-  gint32               bytes_in_queue;
-  guint32              last_played_timestamp;
-  gboolean             flushing;
-  PercentileTracker*   ticks;
-  gint32               framecounter;
-  MonitorPackets*      monitorpackets;
+  GRWLock              rwmutex;
+  GstClockTime         join_delay;
+  GstClockTime         join_min_treshold;
+  GstClockTime         join_max_treshold;
+  GstClockTime         last_join_refresh;
+  PercentileTracker*   delays;
 
-  GstClockTime         last_logging;
-  GQueue*              urgent;
+  gdouble              betha;
 
-  guint64              last_snd_ntp_reference;
-  void               (*send_mprtp_packet_func)(gpointer,GstMpRTPBuffer*);
-  gpointer             send_mprtp_packet_data;
+  guint                bytes_in_queue;
+  guint                packets_in_queue;
+
+  PacketsRcvQueue*     rcvqueue;
+  GQueue*              retained_buffers;
 
 };
 struct _StreamJoinerClass{
@@ -71,9 +58,27 @@ struct _StreamJoinerClass{
 };
 
 StreamJoiner*
-make_stream_joiner(
-    gpointer data,
-    void (*func)(gpointer,GstMpRTPBuffer*));
+make_stream_joiner(PacketsRcvQueue *rcvqueue);
+
+void
+stream_joiner_set_min_treshold (
+    StreamJoiner * this,
+    GstClockTime treshold);
+
+void
+stream_joiner_set_max_treshold (
+    StreamJoiner * this,
+    GstClockTime treshold);
+
+void
+stream_joiner_set_window_treshold (
+    StreamJoiner * this,
+    GstClockTime treshold);
+
+void
+stream_joiner_set_betha_factor (
+    StreamJoiner * this,
+    gdouble betha);
 
 void
 stream_joiner_add_path(
@@ -87,29 +92,14 @@ stream_joiner_rem_path(
     guint8 subflow_id);
 
 void
-stream_joiner_push_monitoring_packet(
-    StreamJoiner * this,
-    GstMpRTPBuffer *mprtp);
-
-void
 stream_joiner_push(
     StreamJoiner * this,
     GstMpRTPBuffer *mprtp);
 
-GstMpRTPBuffer*
-stream_joiner_pop(
+void
+stream_joiner_transfer(
     StreamJoiner *this);
 
-void
-stream_joiner_set_monitor_payload_type(
-    StreamJoiner *this,
-    guint8 monitor_payload_type);
-
-void
-stream_joiner_get_stats(
-    StreamJoiner *this,
-    gdouble *playout_delay,
-    gint32 *playout_buffer_size);
 
 void
 stream_joiner_set_playout_halt_time(
@@ -121,15 +111,6 @@ stream_joiner_set_playout_allowed(
     StreamJoiner *this,
     gboolean playout_permission);
 
-void
-stream_joiner_set_forced_delay(
-    StreamJoiner *this,
-    GstClockTime tick_interval);
-
-void
-stream_joiner_set_stream_delay(
-    StreamJoiner *this,
-    GstClockTime stream_delay);
 
 GType
 stream_joiner_get_type (void);

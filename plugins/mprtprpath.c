@@ -27,24 +27,11 @@ G_DEFINE_TYPE (MpRTPRPath, mprtpr_path, G_TYPE_OBJECT);
 #define _actual_RLEBlock(this) ((RLEBlock*)(this->rle.blocks + this->rle.write_index))
 #define _now(this) (gst_clock_get_time(this->sysclock))
 
-#define _discrle(this) this->discard_rle
-#define _actual_discrle(this) ((DiscardRLEBlock*)(this->discard_rle.blocks + this->discard_rle.write_index))
-#define _lostrle(this) this->losts_rle
-#define _actual_lostrle(this) ((LostsRLEBlock*)(this->losts_rle.blocks + this->losts_rle.write_index))
-#define _owdrle(this) this->owd_rle
-#define _actual_owdrle(this) ((OWDRLEBlock*)(this->owd_rle.blocks + this->owd_rle.write_index))
-
-
 static void mprtpr_path_finalize (GObject * object);
 static void mprtpr_path_reset (MpRTPRPath * this);
-static gint _cmp_seq (guint16 x, guint16 y);
-static void _add_discard(MpRTPRPath *this, GstMpRTPBuffer *mprtp);
+static gint _cmp_seq32 (guint32 x, guint32 y);
 static void _add_delay(MpRTPRPath *this, GstClockTime delay);
 static void _add_skew(MpRTPRPath *this, gint64 skew);
-static void _refresh_RLEBlock(MpRTPRPath *this);
-static void _refresh_RLE(MpRTPRPath *this);
-static void _delays_stats_pipe(gpointer data, PercentileTrackerPipeData *pdata);
-static void _gaps_obsolation_pipe(gpointer data, gint64 seq);
 
 void
 mprtpr_path_class_init (MpRTPRPathClass * klass)
@@ -72,7 +59,6 @@ make_mprtpr_path (guint8 id)
   return result;
 }
 
-
 void
 mprtpr_path_init (MpRTPRPath * this)
 {
@@ -80,26 +66,11 @@ mprtpr_path_init (MpRTPRPath * this)
   this->sysclock = gst_system_clock_obtain ();
   this->delays = make_percentiletracker(512, 50);
   percentiletracker_set_treshold(this->delays, 1000 * GST_MSECOND);
-  percentiletracker_set_stats_pipe(this->delays, _delays_stats_pipe, this);
 
   this->skews = make_percentiletracker2(100, 50);
-  percentiletracker2_set_treshold(this->skews, 1 * GST_SECOND);
-
-  _owdrle(this).last_step = _now(this);
-  _owdrle(this).read_index = _owdrle(this).write_index = 0;
-  _owdrle(this).step_interval = 100 * GST_MSECOND;
-
-  _lostrle(this).last_step = _now(this);
-  _lostrle(this).read_index = _lostrle(this).write_index = 0;
-  _lostrle(this).step_interval = GST_SECOND;
-
-  _discrle(this).last_step = _now(this);
-  _discrle(this).read_index = _discrle(this).write_index = 0;
-  _discrle(this).step_interval = GST_SECOND;
-
-  this->gaps = make_numstracker(1024, 1000 * GST_MSECOND);
-  numstracker_add_rem_pipe(this->gaps, _gaps_obsolation_pipe, this);
-  this->lates = make_numstracker(1024, 1500 * GST_MSECOND);
+  percentiletracker2_set_treshold(this->skews, 2 * GST_SECOND);
+  this->spike_var_treshold = 20 * GST_MSECOND;
+  this->spike_delay_treshold = 375 * GST_MSECOND;
   mprtpr_path_reset (this);
 }
 
@@ -126,15 +97,8 @@ mprtpr_path_reset (MpRTPRPath * this)
   this->seq_initialized = FALSE;
   //this->skew_initialized = FALSE;
   this->cycle_num = 0;
-  this->total_late_discarded = 0;
-  this->total_late_discarded_bytes = 0;
   this->highest_seq = 0;
   this->jitter = 0;
-  this->total_packets_received = 0;
-  this->total_payload_bytes = 0;
-  this->total_packet_losts = 0;
-  this->last_packet_skew = 0;
-  this->last_received_time = 0;
 
 }
 
@@ -148,43 +112,31 @@ mprtpr_path_get_id (MpRTPRPath * this)
   return result;
 }
 
-void mprtpr_path_get_RR_stats(MpRTPRPath *this,
+guint16
+mprtpr_path_get_HSSN (MpRTPRPath * this)
+{
+  guint16 result;
+  THIS_READLOCK (this);
+  result = this->highest_seq;
+  THIS_READUNLOCK (this);
+  return result;
+}
+
+void mprtpr_path_get_regular_stats(MpRTPRPath *this,
                               guint16 *HSN,
                               guint16 *cycle_num,
                               guint32 *jitter,
-                              guint32 *received_num,
-                              guint32 *total_lost,
-                              guint32 *received_bytes)
+                              guint32 *received_num)
 {
   THIS_READLOCK (this);
   if(HSN) *HSN = this->highest_seq;
   if(cycle_num) *cycle_num = this->cycle_num;
   if(jitter) *jitter = this->jitter;
-  if(total_lost) *total_lost = this->total_packet_losts;
   if(received_num) *received_num = this->total_packets_received;
-  if(received_bytes) *received_bytes = this->total_payload_bytes;
   THIS_READUNLOCK (this);
 }
 
-void mprtpr_path_set_reported_sequence(MpRTPRPath *this, guint16 sequence_number)
-{
-  THIS_WRITELOCK (this);
-  this->reported_sequence_number = sequence_number;
-  THIS_WRITEUNLOCK (this);
-}
-
-void mprtpr_path_get_XR7243_stats(MpRTPRPath *this,
-                           guint16 *discarded,
-                           guint32 *discarded_bytes)
-{
-  THIS_READLOCK (this);
-  if(discarded) *discarded = this->total_late_discarded;
-  if(discarded_bytes) *discarded_bytes = this->total_late_discarded_bytes;
-  THIS_READUNLOCK (this);
-}
-
-
-void mprtpr_path_get_XROWD_stats(MpRTPRPath *this,
+void mprtpr_path_get_owd_stats(MpRTPRPath *this,
                                  GstClockTime *median,
                                  GstClockTime *min,
                                  GstClockTime* max)
@@ -196,232 +148,124 @@ void mprtpr_path_get_XROWD_stats(MpRTPRPath *this,
   THIS_READUNLOCK (this);
 }
 
+gboolean
+mprtpr_path_is_in_spike_mode(MpRTPRPath *this)
+{
+  gboolean result;
+  THIS_READLOCK (this);
+  result = this->spike_mode;
+  THIS_READUNLOCK (this);
+  return result;
+}
+
+void
+mprtpr_path_set_spike_treshold(MpRTPRPath *this, GstClockTime delay_treshold, GstClockTime var_treshold)
+{
+  THIS_WRITELOCK (this);
+  this->spike_delay_treshold = delay_treshold;
+  this->spike_var_treshold = var_treshold;
+  THIS_WRITEUNLOCK (this);
+}
 
 
-gboolean mprtpr_path_request_urgent_report(MpRTPRPath *this)
+gboolean
+mprtpr_path_is_urgent_request(MpRTPRPath *this)
 {
   gboolean result;
   THIS_WRITELOCK (this);
-  result = this->request_urgent_report;
-  this->request_urgent_report = FALSE;
+  result = this->urgent;
+  this->urgent = FALSE;
   THIS_WRITEUNLOCK (this);
   return result;
 }
 
 void
-mprtpr_path_set_chunks_reported(MpRTPRPath *this)
+mprtpr_path_set_discard_treshold(MpRTPRPath *this, GstClockTime treshold)
 {
   THIS_WRITELOCK (this);
-  this->discard_rle.read_index = this->discard_rle.write_index;
-  this->losts_rle.read_index = this->losts_rle.write_index;
-  this->owd_rle.read_index = this->owd_rle.write_index;
+  if(this->packetstracker){
+    packetsrcvtracker_set_discarded_treshold(this->packetstracker, treshold);
+  }
   THIS_WRITEUNLOCK (this);
 }
 
 void
-mprtpr_path_set_discard_latency(MpRTPRPath *this, GstClockTime latency)
+mprtpr_path_set_lost_treshold(MpRTPRPath *this, GstClockTime treshold)
 {
   THIS_WRITELOCK (this);
-  this->discard_latency = latency;
+  if(this->packetstracker){
+    packetsrcvtracker_set_lost_treshold(this->packetstracker, treshold);
+  }
+  THIS_WRITEUNLOCK (this);
+}
+
+PacketsRcvTracker *mprtpr_path_ref_packetstracker(MpRTPRPath *this)
+{
+  PacketsRcvTracker *result;
+  THIS_WRITELOCK(this);
+  if(!this->packetstracker){
+    result = this->packetstracker = make_packetsrcvtracker();
+  }else{
+    result = g_object_ref(this->packetstracker);
+  }
+  THIS_WRITEUNLOCK(this);
+  return result;
+}
+
+PacketsRcvTracker* mprtpr_path_unref_packetstracker(MpRTPRPath *this)
+{
+  PacketsRcvTracker *result = NULL;
+  THIS_WRITELOCK(this);
+  if(!this->packetstracker){
+    goto done;
+  }
+  result = this->packetstracker;
+  if(1 < this->packetstracker->object.ref_count){
+    g_object_unref(this->packetstracker);
+    goto done;
+  }
+  g_object_unref(this->packetstracker);
+  result = this->packetstracker = NULL;
+done:
+  THIS_WRITEUNLOCK(this);
+  return result;
+}
+
+void
+mprtpr_path_set_owd_window_treshold(MpRTPRPath *this, GstClockTime treshold)
+{
+  THIS_WRITELOCK (this);
+  percentiletracker_set_treshold(this->delays, treshold);
+  THIS_WRITEUNLOCK (this);
+}
+
+
+void
+mprtpr_path_set_spike_delay_treshold(MpRTPRPath *this, GstClockTime delay_treshold)
+{
+  THIS_WRITELOCK (this);
+  this->spike_delay_treshold = delay_treshold;
   THIS_WRITEUNLOCK (this);
 }
 
 void
-mprtpr_path_set_lost_latency(MpRTPRPath *this, GstClockTime latency)
+mprtpr_path_set_spike_var_treshold(MpRTPRPath *this, GstClockTime var_treshold)
 {
   THIS_WRITELOCK (this);
-  numstracker_set_treshold(this->gaps,  latency);
-  numstracker_set_treshold(this->lates, latency * 1.5);
+  this->spike_var_treshold = var_treshold;
   THIS_WRITEUNLOCK (this);
-}
-
-
-GstRTCPXR_Chunk *
-mprtpr_path_get_discard_chunks(MpRTPRPath *this,
-                              guint *chunks_num,
-                              guint16 *begin_seq,
-                              guint16 *end_seq)
-{
-  GstRTCPXR_Chunk *result = NULL, *chunk;
-  gboolean chunk_type = FALSE;
-  gboolean run_type;
-  DiscardRLEBlock *block;
-  guint16 begin_seq_, end_seq_;
-  gint i,chunks_num_;
-  guint16 *read;
-
-  chunks_num_ = 0;
-  THIS_READLOCK (this);
-  for(i=this->discard_rle.read_index; ;){
-    ++chunks_num_;
-    if(i == this->discard_rle.write_index) break;
-    if(++i == MPRTP_PLUGIN_MAX_RLE_LENGTH) i=0;
-  }
-  if((chunks_num_ % 2) == 1) ++chunks_num_;
-  chunk = result = mprtp_malloc(sizeof(GstRTCPXR_Chunk) * chunks_num_);
-  block = &this->discard_rle.blocks[this->discard_rle.read_index];
-  begin_seq_ = block->start_seq;
-  for(i=this->discard_rle.read_index; ; )
-  {
-    end_seq_ = block->end_seq;
-    run_type = i != this->discard_rle.write_index;
-
-    read = &this->discard_rle.blocks[i].discarded_bytes;
-
-    gst_rtcp_xr_chunk_change(chunk,
-                             &chunk_type,
-                             &run_type,
-                             read);
-    if(i == this->discard_rle.write_index) break;
-    ++chunk;
-    ++block;
-    if(++i == MPRTP_PLUGIN_MAX_RLE_LENGTH) i=0;
-  }
-  THIS_READUNLOCK (this);
-  if(chunks_num) *chunks_num = chunks_num_;
-  if(begin_seq) *begin_seq = begin_seq_;
-  if(end_seq) *end_seq = end_seq_;
-  return result;
-}
-
-
-
-GstRTCPXR_Chunk *
-mprtpr_path_get_owd_chunks(MpRTPRPath *this,
-                              guint *chunks_num,
-                              guint16 *begin_seq,
-                              guint16 *end_seq)
-{
-  GstRTCPXR_Chunk *result = NULL, *chunk;
-  gboolean chunk_type = FALSE;
-  gboolean run_type;
-  OWDRLEBlock *block;
-  guint16 begin_seq_, end_seq_;
-  gint i,chunks_num_;
-  guint16 *read,running_length;
-
-  chunks_num_ = 0;
-  THIS_READLOCK (this);
-  for(i=this->owd_rle.read_index; ;){
-    ++chunks_num_;
-    if(i == this->owd_rle.write_index) break;
-    if(++i == MPRTP_PLUGIN_MAX_RLE_LENGTH) i=0;
-  }
-  if((chunks_num_ % 2) == 1) ++chunks_num_;
-  chunk = result = mprtp_malloc(sizeof(GstRTCPXR_Chunk) * chunks_num_);
-  block = &this->owd_rle.blocks[this->owd_rle.read_index];
-  begin_seq_ = block->start_seq;
-  for(i=this->owd_rle.read_index; ; )
-  {
-    end_seq_ = block->end_seq;
-    run_type = i != this->owd_rle.write_index;
-    {
-      GstClockTime owd;
-      owd = this->owd_rle.blocks[i].median_delay;
-      //owd = GST_TIME_AS_MSECONDS(owd);
-      //running_length = (owd > 0x3FFF) ? 0x3FFF : owd;
-      if(owd < GST_SECOND){
-        gdouble y = (gdouble) owd / (gdouble) GST_SECOND;
-        y *= 16384;
-        running_length = y;
-      }else{
-        running_length = 0x3FFF;
-      }
-      read = &running_length;
-    }
-
-    gst_rtcp_xr_chunk_change(chunk,
-                             &chunk_type,
-                             &run_type,
-                             read);
-    if(i == this->owd_rle.write_index) break;
-    ++chunk;
-    ++block;
-    if(++i == MPRTP_PLUGIN_MAX_RLE_LENGTH) i=0;
-  }
-  THIS_READUNLOCK (this);
-  if(chunks_num) *chunks_num = chunks_num_;
-  if(begin_seq) *begin_seq = begin_seq_;
-  if(end_seq) *end_seq = end_seq_;
-  return result;
-}
-
-
-GstRTCPXR_Chunk *
-mprtpr_path_get_lost_chunks(MpRTPRPath *this,
-                              guint *chunks_num,
-                              guint16 *begin_seq,
-                              guint16 *end_seq)
-{
-  GstRTCPXR_Chunk *result = NULL, *chunk;
-  gboolean chunk_type = FALSE;
-  gboolean run_type;
-  LostsRLEBlock *block;
-  guint16 begin_seq_, end_seq_;
-  gint i,chunks_num_;
-  guint16 *read;
-
-  chunks_num_ = 0;
-  THIS_READLOCK (this);
-  for(i=this->losts_rle.read_index; ;){
-    ++chunks_num_;
-    if(i == this->losts_rle.write_index) break;
-    if(++i == MPRTP_PLUGIN_MAX_RLE_LENGTH) i=0;
-  }
-  if((chunks_num_ % 2) == 1) ++chunks_num_;
-  chunk = result = mprtp_malloc(sizeof(GstRTCPXR_Chunk) * chunks_num_);
-  block = &this->losts_rle.blocks[this->losts_rle.read_index];
-  begin_seq_ = block->start_seq;
-  for(i=this->losts_rle.read_index; ; )
-  {
-    end_seq_ = block->end_seq;
-    run_type = i != this->losts_rle.write_index;
-
-    read = &this->losts_rle.blocks[i].lost_packets;
-
-    gst_rtcp_xr_chunk_change(chunk,
-                             &chunk_type,
-                             &run_type,
-                             read);
-    if(i == this->losts_rle.write_index) break;
-    ++chunk;
-    ++block;
-    if(++i == MPRTP_PLUGIN_MAX_RLE_LENGTH) i=0;
-  }
-  THIS_READUNLOCK (this);
-  if(chunks_num) *chunks_num = chunks_num_;
-  if(begin_seq) *begin_seq = begin_seq_;
-  if(end_seq) *end_seq = end_seq_;
-  return result;
 }
 
 
 
 void mprtpr_path_get_joiner_stats(MpRTPRPath *this,
                            gdouble       *path_delay,
-                           gdouble       *path_skew,
-                           guint32       *jitter)
+                           gdouble       *path_skew)
 {
   THIS_READLOCK (this);
-//  if(path_delay) *path_delay = this->estimated_delay;
-  if(path_delay) *path_delay = percentiletracker_get_stats(this->delays, NULL, NULL, NULL);
+  if(path_delay) *path_delay = this->path_avg_delay;
   if(path_skew)  *path_skew = this->path_skew; //this->estimated_skew;
-  if(jitter) *jitter = this->jitter;
   THIS_READUNLOCK (this);
-}
-
-void mprtpr_path_tick(MpRTPRPath *this)
-{
-  _refresh_RLE(this);
-  numstracker_obsolate(this->gaps);
-  numstracker_obsolate(this->lates);
-}
-
-void mprtpr_path_add_discard(MpRTPRPath *this, GstMpRTPBuffer *mprtp)
-{
-  THIS_WRITELOCK (this);
-  _add_discard(this, mprtp);
-  THIS_WRITEUNLOCK (this);
 }
 
 void mprtpr_path_add_delay(MpRTPRPath *this, GstClockTime delay)
@@ -431,205 +275,113 @@ void mprtpr_path_add_delay(MpRTPRPath *this, GstClockTime delay)
   THIS_WRITEUNLOCK (this);
 }
 
-
-
+//Only process rtp packets
 void
 mprtpr_path_process_rtp_packet (MpRTPRPath * this, GstMpRTPBuffer *mprtp)
 {
-//  g_print("mprtpr_path_process_rtp_packet begin\n");
-  gint64 skew = 0;
+  gint64 skew;
 
   THIS_WRITELOCK (this);
+  if(!mprtp->delay){
+    GST_WARNING_OBJECT(this, "A packet delay should not be 0, the mprtpr path process doesn't work with it");
+    goto done;
+  }
+
   if (this->seq_initialized == FALSE) {
     this->highest_seq = mprtp->subflow_seq;
     this->total_packets_received = 1;
     this->last_rtp_timestamp = mprtp->timestamp;
     this->last_mprtp_delay = mprtp->delay;
-    if(0 < mprtp->delay)
-      _add_delay(this, mprtp->delay);
+    _add_delay(this, mprtp->delay);
     this->seq_initialized = TRUE;
     goto done;
   }
 
-  if(!mprtp->monitor_packet){
-    skew = (((gint64)this->last_mprtp_delay - (gint64)mprtp->delay));
-    this->last_mprtp_delay = mprtp->delay;
-    ++this->total_packets_received;
-    this->total_payload_bytes += mprtp->payload_bytes;
-    this->jitter += ((skew < 0?-1*skew:skew) - this->jitter) / 16;
+  //normal jitter calculation for regular rtcp reports
+  skew = (((gint64)this->last_mprtp_delay - (gint64)mprtp->delay));
+  this->jitter += ((skew < 0?-1*skew:skew) - this->jitter) / 16;
+  this->last_mprtp_delay = mprtp->delay;
+  ++this->total_packets_received;
+
+
+  //collect and evaluate skew in another way
+  if(_cmp_seq32(this->last_rtp_timestamp, mprtp->timestamp) < 0){
+    this->last_rtp_timestamp = mprtp->timestamp;
+    _add_skew(this, skew);
   }
-  if(0 < mprtp->delay){
-    _add_delay(this, mprtp->delay);
-    if(_cmp_seq(this->reported_sequence_number, mprtp->subflow_seq) < 0 &&
-       0 < this->discard_latency &&
-       this->discard_latency < mprtp->delay)
-    {
-      _add_discard(this, mprtp);
-    }
-  }
-  if(_cmp_seq(mprtp->subflow_seq, this->highest_seq) <= 0){
-    numstracker_add(this->lates, mprtp->subflow_seq);
-    goto done;
-  }
-  if(_cmp_seq(this->highest_seq + 1, mprtp->subflow_seq) < 0){
-    guint16 seq = this->highest_seq + 1;
-    for(; _cmp_seq(seq, mprtp->subflow_seq) < 0; ++seq){
-      numstracker_add(this->gaps, seq);
-    }
+  _add_delay(this, mprtp->delay);
+
+  if(this->packetstracker){
+    packetsrcvtracker_add(this->packetstracker, mprtp);
   }
 
+  //consider cycle num increase with allowance of a little gap
   if(65472 < this->highest_seq && mprtp->subflow_seq < 128){
     ++this->cycle_num;
   }
 
+  //set the new packet seq as the highest seq
   this->highest_seq = mprtp->subflow_seq;
-  if(this->last_rtp_timestamp == mprtp->timestamp)
-    goto done;
 
-  if(!mprtp->monitor_packet){
-    _add_skew(this, skew);
-  }
 
-  //For Kalman delay and skew estimation test (kalman_simple_test)
-//  if(this->id == 1){
-//    g_print("%lu,%lu,%lu,%lu,%ld,%f,%f,%lu,%lu\n",
-//            GST_TIME_AS_USECONDS((guint64)mprtp->delay),
-//            GST_TIME_AS_USECONDS((guint64)this->sh_delay),
-//            GST_TIME_AS_USECONDS((guint64)this->md_delay),
-//            GST_TIME_AS_USECONDS((guint64)this->estimated_delay),
-//            skew / 1000,
-//            this->path_skew / 1000.,
-//            this->estimated_skew / 1000.,
-//            GST_TIME_AS_USECONDS(percentiletracker_get_stats(this->lt_low_delays, NULL, NULL, NULL)),
-//            GST_TIME_AS_USECONDS(percentiletracker_get_stats(this->lt_high_delays, NULL, NULL, NULL))
-//            );
-//  }
-  //new frame
-  this->last_rtp_timestamp = mprtp->timestamp;
 
 done:
-  _refresh_RLEBlock(this);
-  THIS_WRITEUNLOCK (this);
+  THIS_WRITEUNLOCK(this);
 }
 
 gint
-_cmp_seq (guint16 x, guint16 y)
+_cmp_seq32 (guint32 x, guint32 y)
 {
   if(x == y) return 0;
-  if(x < y && y - x < 32768) return -1;
-  if(x > y && x - y > 32768) return -1;
-  if(x < y && y - x > 32768) return 1;
-  if(x > y && x - y < 32768) return 1;
+  if(x < y && y - x < 2147483648) return -1;
+  if(x > y && x - y > 2147483648) return -1;
+  if(x < y && y - x > 2147483648) return 1;
+  if(x > y && x - y < 2147483648) return 1;
   return 0;
 }
 
-void _add_discard(MpRTPRPath *this, GstMpRTPBuffer *mprtp)
-{
-  ++this->total_late_discarded;
-  this->total_late_discarded_bytes+=mprtp->payload_bytes;
-  _actual_discrle(this)->discarded_bytes+=mprtp->payload_bytes;
-  ++_actual_discrle(this)->discarded_packets;
-}
 
 void _add_delay(MpRTPRPath *this, GstClockTime delay)
 {
+  GstClockTime ddelay;
+  gint64 median_delay;
   percentiletracker_add(this->delays, delay);
-
-  if(this->delay_avg == 0.) this->delay_avg = delay;
-  else                      this->delay_avg = delay * .001 + this->delay_avg * .999;
-
-  if(this->delay_avg < (delay>>1)){
-    this->request_urgent_report = TRUE;
+  median_delay = percentiletracker_get_stats(this->delays, NULL, NULL, NULL);
+  this->path_avg_delay = this->path_avg_delay * .99 + (gdouble) median_delay * .01;
+  if(this->path_avg_delay * 2. < delay){
+    this->urgent = TRUE;
   }
+
+  ddelay = ABS(delay - this->last_added_delay);
+  if (ddelay > this->spike_delay_treshold) {
+  // A new "delay spike" has started
+    this->spike_mode = TRUE;
+    this->spike_var = 0;
+  }else {
+    if (this->spike_mode) {
+      GstClockTime vdelay;
+      // We're within a delay spike; maintain slope estimate
+      this->spike_var = this->spike_var>>1;
+      vdelay = (ABS(delay - this->last_added_delay) + ABS(delay - this->last_last_added_delay))/8;
+      this->spike_var = this->spike_var + vdelay;
+      if (this->spike_var < this->spike_var_treshold) {
+        // Slope is flat; return to normal operation
+        this->spike_mode = FALSE;
+      }
+    }
+  }
+  this->last_last_added_delay = this->last_added_delay;
+  this->last_added_delay = delay;
 }
 
 void _add_skew(MpRTPRPath *this, gint64 skew)
 {
+  gint64 median_skew;
   percentiletracker2_add(this->skews, skew);
-  this->path_skew = this->path_skew * .999 + (gdouble)percentiletracker2_get_stats(this->skews, NULL, NULL, NULL) * .001;
+  median_skew = percentiletracker2_get_stats(this->skews, NULL, NULL, NULL);
+  this->path_skew = this->path_skew * .99 + (gdouble) median_skew * .01;
 }
 
-void _refresh_RLEBlock(MpRTPRPath *this)
-{
-  if(_cmp_seq(this->highest_seq, _actual_discrle(this)->start_seq) < 0){
-    _actual_discrle(this)->start_seq = this->highest_seq;
-  }
-  if(_cmp_seq(_actual_discrle(this)->start_seq, this->highest_seq) < 0){
-    _actual_discrle(this)->end_seq = this->highest_seq;
-  }
-
-  if(_cmp_seq(this->highest_seq, _actual_lostrle(this)->start_seq) < 0){
-    _actual_lostrle(this)->start_seq = this->highest_seq;
-  }
-  if(_cmp_seq(_actual_lostrle(this)->start_seq, this->highest_seq) < 0){
-    _actual_lostrle(this)->end_seq = this->highest_seq;
-  }
-
-  if(_cmp_seq(this->highest_seq, _actual_owdrle(this)->start_seq) < 0){
-    _actual_owdrle(this)->start_seq = this->highest_seq;
-  }
-  if(_cmp_seq(_actual_owdrle(this)->start_seq, this->highest_seq) < 0){
-    _actual_owdrle(this)->end_seq = this->highest_seq;
-  }
-
-//  g_print("RLEBlock| Begin: %hu, End: %hu| Discards: %hu| Delay: %lu\n",
-//          block->start_seq,
-//          block->end_seq,
-//          block->discards,
-//          block->median_delay);
-}
-
-
-void _refresh_RLE(MpRTPRPath *this)
-{
-  if(_discrle(this).last_step < _now(this) - _discrle(this).step_interval){
-    DiscardRLE *rle;
-    DiscardRLEBlock *block;
-    rle = &_discrle(this);
-    if(++rle->write_index == MPRTP_PLUGIN_MAX_RLE_LENGTH) rle->write_index = 0;
-    rle->last_step=_now(this);
-    block = _actual_discrle(this);
-    memset(block, 0, sizeof(DiscardRLEBlock));
-    block->start_seq = block->end_seq = this->highest_seq;
-  }
-
-  if(_lostrle(this).last_step < _now(this) - _lostrle(this).step_interval){
-    LostsRLE *rle;
-    LostsRLEBlock *block;
-    rle = &_lostrle(this);
-    if(++rle->write_index == MPRTP_PLUGIN_MAX_RLE_LENGTH) rle->write_index = 0;
-    rle->last_step=_now(this);
-    block = _actual_lostrle(this);
-    memset(block, 0, sizeof(LostsRLEBlock));
-    block->start_seq = block->end_seq = this->highest_seq;
-  }
-
-  if(_owdrle(this).last_step < _now(this) - _owdrle(this).step_interval){
-    OWDRLE *rle;
-    OWDRLEBlock *block;
-    rle = &_owdrle(this);
-    if(++rle->write_index == MPRTP_PLUGIN_MAX_RLE_LENGTH) rle->write_index = 0;
-    rle->last_step=_now(this);
-    block = _actual_owdrle(this);
-    memset(block, 0, sizeof(OWDRLEBlock));
-    block->start_seq = block->end_seq = this->highest_seq;
-  }
-
-}
-
-void _delays_stats_pipe(gpointer data, PercentileTrackerPipeData *pdata)
-{
-  MpRTPRPath *this = data;
-  _actual_owdrle(this)->median_delay = pdata->percentile;
-}
-
-void _gaps_obsolation_pipe(gpointer data, gint64 seq)
-{
-  MpRTPRPath *this = data;
-  if(numstracker_find(this->lates, seq)) return;
-  ++_actual_lostrle(this)->lost_packets;
-  ++this->total_packet_losts;
-}
 
 #undef THIS_READLOCK
 #undef THIS_READUNLOCK

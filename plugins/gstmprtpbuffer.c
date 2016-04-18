@@ -69,8 +69,7 @@ void gst_mprtp_buffer_init(GstMpRTPBuffer *mprtp,
                                GstBuffer *buffer,
                                guint8 mprtp_ext_header_id,
                                guint8 abs_time_ext_header_id,
-                               GstClockTime delay_offset,
-                               guint8 monitor_payload_type)
+                               guint8 fec_payload_type)
 {
   gpointer pointer = NULL;
   guint size;
@@ -92,11 +91,11 @@ void gst_mprtp_buffer_init(GstMpRTPBuffer *mprtp,
   mprtp->abs_seq          = gst_rtp_buffer_get_seq(&rtp);
   mprtp->payload_type     = gst_rtp_buffer_get_payload_type(&rtp);
   mprtp->abs_rcv_ntp_time = NTP_NOW;
-  mprtp->monitor_packet   = mprtp->payload_type == monitor_payload_type;
+  mprtp->fec_packet   = mprtp->payload_type == fec_payload_type;
   size=0;
   pointer = NULL;
-  if(gst_rtp_buffer_get_extension_onebyte_header(
-      &rtp, abs_time_ext_header_id, 0, &pointer, &size))
+  if(0 < abs_time_ext_header_id &&
+     gst_rtp_buffer_get_extension_onebyte_header(&rtp, abs_time_ext_header_id, 0, &pointer, &size))
   {
     guint32 rcv_chunk = (NTP_NOW >> 14) & 0x00ffffff;
     guint64 ntp_base = NTP_NOW;
@@ -127,10 +126,6 @@ void gst_mprtp_buffer_init(GstMpRTPBuffer *mprtp,
     if(mprtp->abs_rcv_ntp_time < mprtp->abs_snd_ntp_time){
       g_print("VALAMI PROBLÉMA VAN MÁR MEGINT\n");
     }
-    if(delay_offset < mprtp->delay)
-      mprtp->delay -= delay_offset;
-    else if(0 < delay_offset)
-      mprtp->delay = 100 * GST_MSECOND;
   }else{
     mprtp->abs_snd_ntp_time = 0;
     mprtp->delay = 0;
