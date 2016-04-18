@@ -24,7 +24,6 @@
 #include <gst/rtp/gstrtpbuffer.h>
 #include <gst/rtp/gstrtcpbuffer.h>
 #include "subratectrler.h"
-#include "fbrasubctrler.h"
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
@@ -118,7 +117,6 @@ void subratectrler_time_update(SubflowRateController *this)
 
   switch(this->type){
     case SUBRATECTRLER_FBRA_MARC:
-      fbrasubctrler_time_update(this->controller);
       break;
     default:
     case SUBRATECTRLER_NO_CTRL:
@@ -140,7 +138,6 @@ void subratectrler_signal_update(SubflowRateController *this, MPRTPSubflowRateCo
 
   switch(this->type){
     case SUBRATECTRLER_FBRA_MARC:
-      fbrasubctrler_signal_update(this->controller, &params->fbra);
       break;
     default:
     case SUBRATECTRLER_NO_CTRL:
@@ -162,7 +159,6 @@ void subratectrler_signal_request(SubflowRateController *this, MPRTPSubflowRateC
 
   switch(this->type){
     case SUBRATECTRLER_FBRA_MARC:
-      fbrasubctrler_signal_request(this->controller, &params->fbra);
       break;
     default:
     case SUBRATECTRLER_NO_CTRL:
@@ -198,7 +194,6 @@ void subratectrler_report_update(
 
   switch(this->type){
     case SUBRATECTRLER_FBRA_MARC:
-      fbrasubctrler_report_update(this->controller, summary);
       break;
     default:
     case SUBRATECTRLER_NO_CTRL:
@@ -225,7 +220,6 @@ gboolean subratectrler_packet_approver(
 
   switch(this->type){
     case SUBRATECTRLER_FBRA_MARC:
-      result = fbrasubctrler_path_approver(this->controller, buf);
       break;
     default:
     case SUBRATECTRLER_NO_CTRL:
@@ -245,8 +239,6 @@ void _enable(SubflowRateController *this)
 {
   switch(this->type){
     case SUBRATECTRLER_FBRA_MARC:
-      this->controller = make_fbrasubctrler(this->path);
-      fbrasubctrler_enable(this->controller);
       break;
     default:
     case SUBRATECTRLER_NO_CTRL:
@@ -260,8 +252,6 @@ void _disable(SubflowRateController *this)
 {
   switch(this->type){
     case SUBRATECTRLER_FBRA_MARC:
-      fbrasubctrler_disable(this->controller);
-      g_object_unref(this->controller);
       break;
     default:
     case SUBRATECTRLER_NO_CTRL:
@@ -279,7 +269,6 @@ _logging(
 
   switch(this->type){
     case SUBRATECTRLER_FBRA_MARC:
-      fbrasubctrler_logging(this->controller);
       break;
     default:
     case SUBRATECTRLER_NO_CTRL:
@@ -294,7 +283,6 @@ _log2csv(
   SubflowRateController *this = data;
   switch(this->type){
     case SUBRATECTRLER_FBRA_MARC:
-      fbrasubctrler_logging2csv(this->controller);
       break;
     default:
     case SUBRATECTRLER_NO_CTRL:
