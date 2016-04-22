@@ -197,7 +197,7 @@ struct _Private{
 #define _btl_eps(this)                _priv(this)->bottleneck_epsilon
 #define _btl_mon_int(this)            _priv(this)->bottleneck_monitoring_interval
 #define _btl_probe_int(this)          _priv(this)->bottleneck_probe_interval
-#define _norm_pbobe_int(this)         _priv(this)->normal_probe_interval
+#define _norm_mon_int(this)         _priv(this)->normal_probe_interval
 #define _inc_mit_th(this)             _priv(this)->increasement_mitigation_treshold
 #define _gprobe_th(this)              _priv(this)->qdelay_probe_treshold
 #define _gkeep_th(this)               _priv(this)->qdelay_keep_treshold
@@ -414,13 +414,13 @@ static void _update_tr_corr(FBRASubController *this)
 static gint32 _get_probe_interval(FBRASubController *this)
 {
   if(!this->bottleneck_point){
-    return _norm_pbobe_int(this);
+    return _norm_mon_int(this);
   }
   if(this->target_bitrate < this->bottleneck_point * (1.-_btl_eps(this))){
-    return _norm_pbobe_int(this);
+    return _norm_mon_int(this);
   }
   if(this->bottleneck_point * (1.+_btl_eps(this)) < this->target_bitrate){
-    return _norm_pbobe_int(this);
+    return _norm_mon_int(this);
   }
   return _btl_probe_int(this);
 }
@@ -812,7 +812,7 @@ _increase_stage(
   if(_does_near_to_bottleneck_point(this)){
     _switch_stage_to(this, STAGE_PROBE, FALSE);
     _set_event(this, EVENT_READY);
-  }else if(_now(this) - _norm_pbobe_int(this) * GST_SECOND < _priv(this)->stage_changed){
+  }else if(_now(this) - _norm_mon_int(this) * GST_SECOND < _priv(this)->stage_changed){
     goto exit;
   }else{
     target_rate = MIN(1.5 * _GP(this), target_rate + this->monitored_bitrate);
