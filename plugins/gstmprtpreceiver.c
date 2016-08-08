@@ -55,6 +55,8 @@ GST_DEBUG_CATEGORY_STATIC (gst_mprtpreceiver_debug_category);
 #define PACKET_IS_RTCP(b) (b > 192 && b < 223)
 #define PACKET_IS_DTLS(b) (b > 0x13 && b < 0x40)
 
+#define _now(this) gst_clock_get_time (this->sysclock)
+
 typedef struct
 {
   GstPad *inpad;
@@ -231,6 +233,8 @@ gst_mprtpreceiver_init (GstMprtpreceiver * mprtpreceiver)
   mprtpreceiver->only_report_receiving = FALSE;
   mprtpreceiver->mprtp_ext_header_id = MPRTP_DEFAULT_EXTENSION_HEADER_ID;
   mprtpreceiver->fec_payload_type = FEC_PAYLOAD_DEFAULT_ID;
+  mprtpreceiver->sysclock = gst_system_clock_obtain();
+
 }
 
 void
@@ -312,7 +316,7 @@ gst_mprtpreceiver_finalize (GObject * object)
   GST_DEBUG_OBJECT (mprtpreceiver, "finalize");
 
   /* clean up object here */
-
+  gst_object_unref(mprtpreceiver->sysclock);
   G_OBJECT_CLASS (gst_mprtpreceiver_parent_class)->finalize (object);
 }
 
@@ -646,9 +650,10 @@ gst_mprtpreceiver_sink_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
     result = GST_FLOW_CUSTOM_ERROR;
     goto exit;
   }
-  THIS_READLOCK (this);
-  packet_type = _get_packet_mptype (this, buf, &map, &subflow_id);
 
+  THIS_READLOCK (this);
+
+  packet_type = _get_packet_mptype (this, buf, &map, &subflow_id);
   if (packet_type == PACKET_IS_MPRTCP) {
     result = _send_mprtcp_buffer (this, buf);
   } else if(packet_type == PACKET_IS_MPRTP_MONITORING){
@@ -686,7 +691,6 @@ _send_mprtcp_buffer (GstMprtpreceiver * this, GstBuffer * buf)
     GST_WARNING_OBJECT (this, "The RTCP packet is not readable");
     return result;
   }
-
   report = (GstMPRTCPSubflowReport *) gst_rtcp_get_first_header (&rtcp);
   block = gst_mprtcp_get_first_block (report);
   outpad = this->mprtcp_rr_srcpad;

@@ -3,10 +3,8 @@
 
 #include <gst/gst.h>
 #include "mprtpspath.h"
-#include "bintree.h"
 #include "sndratedistor.h"
 #include "reportproc.h"
-#include "rmdiproc.h"
 #include "signalreport.h"
 
 typedef struct _SubflowRateController SubflowRateController;
@@ -21,7 +19,7 @@ typedef struct _SubflowRateControllerClass SubflowRateControllerClass;
 
 typedef enum{
   SUBRATECTRLER_NO_CTRL     = 0,
-  SUBRATECTRLER_FBRA_MARC   = 2,
+  SUBRATECTRLER_FBRA   = 2,
 }SubRateControllerType;
 
 
@@ -49,5 +47,5 @@ void subratectrler_report_update(SubflowRateController *this, GstMPRTCPReportSum
 void subratectrler_time_update(SubflowRateController *this);
 void subratectrler_signal_update(SubflowRateController *this, MPRTPSubflowRateController *ratectrler_params);
 void subratectrler_signal_request(SubflowRateController *this, MPRTPSubflowRateController *ratectrler_params);
-gboolean subratectrler_packet_approver(gpointer data,GstBuffer *buf);
+gboolean subratectrler_packet_approver(gpointer data,GstRTPBuffer *buf);
 #endif /* SUBRATECTRLER_H_ */

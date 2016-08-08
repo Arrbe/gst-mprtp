@@ -70,13 +70,18 @@ void report_producer_add_xr_discarded_rle(ReportProducer *this,
                                           guint8 thinning,
                                           guint16 begin_seq,
                                           guint16 end_seq,
-                                          GstRTCPXRChunk *chunks,
-                                          guint chunks_len);
+                                          gboolean *vector,
+                                          guint vector_length);
 
 void report_producer_add_xr_discarded_bytes(ReportProducer *this,
                                     guint8 interval_metric_flag,
                                     gboolean early_bit,
                                     guint32 payload_bytes_discarded);
+
+void report_producer_add_xr_discarded_packets(ReportProducer *this,
+                                    guint8 interval_metric_flag,
+                                    gboolean early_bit,
+                                    guint32 discarded_packets_num);
 
 void report_producer_add_xr_owd(ReportProducer *this,
                                 guint8 interval_metric_flag,
@@ -90,9 +95,17 @@ void report_producer_add_afb(ReportProducer *this,
                                 gpointer fci_dat,
                                 guint fci_dat_len);
 
-void report_producer_add_afb_rmdi(ReportProducer *this,
+void report_producer_add_afb_remb(ReportProducer *this,
                                   guint32 media_source_ssrc,
-                                  GstRTCPAFB_RMDIRecord *src_records);
+                                  guint32 num_ssrc,
+                                  gfloat float_num,
+                                  guint32 ssrc_feedback,
+                                  guint16 hssn);
+
+void report_producer_add_afb_reps(ReportProducer *this,
+                                  guint32 media_source_ssrc,
+                                  guint8 sampling_num,
+                                  gfloat float_num);
 
 void report_producer_add_sr(ReportProducer *this,
                                 guint64 ntp_timestamp,

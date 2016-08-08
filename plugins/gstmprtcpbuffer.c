@@ -21,7 +21,7 @@
 #define RTCPXR7243BLOCK_WORDS (RTCPXR7243BLOCK_BYTES>>2)
 #define RTCPXROWDBLOCK_BYTES 20
 #define RTCPXROWDBLOCK_WORDS (RTCPXROWDBLOCK_BYTES>>2)
-#define RTCPFB_BYTES 8
+#define RTCPFB_BYTES 12
 #define RTCPFB_WORDS (RTCPFB_BYTES>>2)
 #define RTCPRRBLOCK_BYTES 24
 #define RTCPRRBLOCK_WORDS (RTCPRRBLOCK_BYTES>>2)
@@ -514,6 +514,40 @@ gst_rtcp_xr_block_change (GstRTCPXRBlock *block, guint8 *block_type,
   }
 }
 
+//------------------ XR7002 ------------------------
+
+void
+gst_rtcp_xr_discarded_packets_setup (GstRTCPXRDiscardedBlock * block, guint8 interval_metric,
+    gboolean early_bit, guint32 ssrc, guint32 discarded_packets)
+{
+  block->block_length = g_htons (2);
+  block->block_type = GST_RTCP_XR_DISCARDED_PACKETS_BLOCK_TYPE_IDENTIFIER;
+  block->discarded_bytes_or_packets = g_htonl (discarded_packets);
+  block->early_bit = early_bit;
+  block->interval_metric = interval_metric;
+  block->reserved = 0;
+  block->ssrc = g_htonl (ssrc);
+}
+
+void
+gst_rtcp_xr_discarded_packets_getdown (GstRTCPXRDiscardedBlock *block,
+    guint8 * interval_metric, gboolean * early_bit, guint32 * ssrc,
+    guint32 * discarded_packets)
+{
+  if (discarded_packets) {
+    *discarded_packets = g_ntohl (block->discarded_bytes_or_packets);
+  }
+  if (early_bit) {
+    *early_bit = block->early_bit;
+  }
+  if (interval_metric) {
+    *interval_metric = block->interval_metric;
+  }
+  if (ssrc) {
+    *ssrc = g_ntohs (block->ssrc);
+  }
+}
+
 //------------------ XR7243 ------------------------
 
 
@@ -523,7 +557,7 @@ gst_rtcp_xr_discarded_bytes_setup (GstRTCPXRDiscardedBlock * block, guint8 inter
 {
   block->block_length = g_htons (2);
   block->block_type = GST_RTCP_XR_DISCARDED_BYTES_BLOCK_TYPE_IDENTIFIER;
-  block->discarded_bytes = g_htonl (discarded_bytes);
+  block->discarded_bytes_or_packets = g_htonl (discarded_bytes);
   block->early_bit = early_bit;
   block->interval_metric = interval_metric;
   block->reserved = 0;
@@ -536,7 +570,7 @@ gst_rtcp_xr_discarded_bytes_change (GstRTCPXRDiscardedBlock * block,
     guint32 * discarded_bytes)
 {
   if (discarded_bytes) {
-      block->discarded_bytes = g_htonl (*discarded_bytes);
+      block->discarded_bytes_or_packets = g_htonl (*discarded_bytes);
   }
   if (early_bit) {
       block->early_bit = *early_bit;
@@ -555,7 +589,7 @@ gst_rtcp_xr_discarded_bytes_getdown (GstRTCPXRDiscardedBlock *block,
     guint32 * discarded_bytes)
 {
   if (discarded_bytes) {
-    *discarded_bytes = g_ntohl (block->discarded_bytes);
+    *discarded_bytes = g_ntohl (block->discarded_bytes_or_packets);
   }
   if (early_bit) {
     *early_bit = block->early_bit;
@@ -623,75 +657,95 @@ gst_rtcp_afb_getdown (GstRTCPFB * report,
   }
 }
 
+
+static guint32 g_htonfloat(gfloat value){
+    union v {
+        gfloat      f;
+        guint32     i;
+    }val;
+    val.f = value;
+    val.i = g_htonl(val.i);
+    return val.i;
+};
+
+static gfloat g_ntohfloat(guint32 value){
+    union v {
+        gfloat      f;
+        guint32     i;
+    }val;
+    val.i = g_ntohl(value);
+    return val.f;
+};
+
 void
-gst_rtcp_afb_rmdi_change (GstRTCPAFB_RMDI * report,
-                     guint8 *rsvd,
-                     guint8 *records_num,
-                     guint16 *length)
+gst_rtcp_afb_remb_change (GstRTCPAFB_REMB * report,
+                          guint32 *num_ssrc,
+                          gfloat *float_num,
+                          guint32 *ssrc_feedback,
+                          guint16 *hssn)
 {
-  if(rsvd){
-    report->rsvd = *rsvd;
+  if(num_ssrc){
+      report->num_ssrc = *num_ssrc;
   }
-  if(records_num){
-    report->records_num = *records_num;
+  if(float_num){
+      report->float_num = g_htonfloat(*float_num);
   }
-  if(length){
-    report->length = g_htons(*length);
+  if(ssrc_feedback){
+      report->ssrc_feedback = g_htonl(*ssrc_feedback);
+  }
+  if(hssn){
+      report->hssn = g_htonl(*hssn);
   }
 }
 
 void
-gst_rtcp_afb_rmdi_getdown (GstRTCPAFB_RMDI * report,
-                      guint8 *rsvd,
-                      guint8 *records_num,
-                      guint16 *length)
+gst_rtcp_afb_remb_getdown (GstRTCPAFB_REMB * report,
+                           guint32 *num_ssrc,
+                           gfloat *float_num,
+                           guint32 *ssrc_feedback,
+                           guint16 *hssn)
 {
-  if(rsvd){
-      *rsvd = report->rsvd;
-  }
-  if(records_num){
-      *records_num = report->records_num;
-  }
-  if(length){
-      *length = g_ntohs(report->length);
-  }
-}
 
-void
-gst_rtcp_afb_rmdi_record_change (GstRTCPAFB_RMDIRecord * record,
-                      guint16 *HSSN,
-                      guint16 *disc_packets_num,
-                      guint32 *owd_sample)
-{
-  if(HSSN){
-      record->HSSN = g_htons(*HSSN);
+  if(num_ssrc){
+      *num_ssrc = report->num_ssrc;
   }
-  if(disc_packets_num){
-      record->disc_packets_num = *disc_packets_num;
+  if(float_num){
+    *float_num = g_ntohfloat(report->float_num);
   }
-  if(owd_sample){
-      record->owd_sample = g_ntohl(*owd_sample);
+  if(ssrc_feedback){
+      *ssrc_feedback = g_ntohl(report->ssrc_feedback);
+  }
+  if(hssn){
+      *hssn = g_ntohs(report->hssn);
   }
 }
 
 
 void
-gst_rtcp_afb_rmdi_record_getdown (GstRTCPAFB_RMDIRecord * record,
-                                  guint16 *HSSN,
-                                  guint16 *disc_packets_num,
-                                  guint32 *owd_sample)
+gst_rtcp_afb_reps_change (GstRTCPAFB_REPS * report,
+                          guint8 *sampling_num,
+                          gfloat *tendency)
 {
-  if(HSSN){
-      *HSSN = g_ntohs(record->HSSN);
+  if(sampling_num){
+      report->sampling_num = *sampling_num;
   }
-  if(disc_packets_num){
-      *disc_packets_num = g_ntohs(record->disc_packets_num);
-  }
-  if(owd_sample){
-      *owd_sample = g_ntohl(record->owd_sample);
+  if(tendency){
+    report->tendency = g_htonfloat(*tendency);
   }
 }
 
+void
+gst_rtcp_afb_reps_getdown (GstRTCPAFB_REPS * report,
+                           guint8 *sampling_num,
+                           gfloat *tendency)
+{
+    if(sampling_num){
+        *sampling_num = report->sampling_num;
+    }
+  if(tendency){
+    *tendency = g_ntohfloat(report->tendency);
+  }
+}
 
 void
 gst_rtcp_afb_setup_fci_data(GstRTCPFB * report, gpointer fci_dat, guint fci_len)
@@ -1127,10 +1181,6 @@ gst_printfnc_rtcp (GstRTCPHeader * header, printfnc print)
           guint32 fci_id;
           gst_rtcp_afb_getdown(afb, NULL, NULL, &fci_id);
           gst_printfnc_rtcp_afb(afb, print);
-          if(fci_id == RTCP_AFB_RMDI_ID){
-              gst_printfnc_rtcp_afb_rmdi(&afb->fci_data, print);
-          }
-
         }
         break;
       case GST_RTCP_TYPE_XR:
@@ -1273,6 +1323,9 @@ again:
     case GST_RTCP_XR_LOSS_RLE_BLOCK_TYPE_IDENTIFIER:
         //todo: implement
         break;
+    case GST_RTCP_XR_DISCARDED_PACKETS_BLOCK_TYPE_IDENTIFIER:
+      gst_printfnc_rtcp_xr_discarded_packets_block((GstRTCPXRDiscardedBlock*) block, print);
+        break;
     case GST_RTCP_XR_DISCARDED_RLE_BLOCK_TYPE_IDENTIFIER:
         gst_printfnc_rtcp_xr_discarded_rle_block((GstRTCPXRDiscardedRLEBlock*)block, print);
         break;
@@ -1294,6 +1347,26 @@ again:
   }
 done:
   return;
+}
+
+
+void
+gst_printfnc_rtcp_xr_discarded_packets_block (GstRTCPXRDiscardedBlock * block, printfnc print)
+{
+  guint8 interval_metric;
+  gboolean early_bit;
+  guint32 ssrc;
+  guint32 discarded_packets;
+
+  gst_rtcp_xr_discarded_packets_getdown (block, &interval_metric, &early_bit, &ssrc,
+      &discarded_packets);
+  print ("+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+\n"
+      "|%15d|%3d|%1d|%9d|%31d|\n"
+      "+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+\n"
+      "|%63X|\n"
+      "+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+\n"
+      "|%63X|\n", block->block_type, interval_metric, early_bit, 0,
+      g_ntohs (block->block_length), ssrc, discarded_packets);
 }
 
 void
@@ -1329,42 +1402,22 @@ gst_printfnc_rtcp_afb (GstRTCPFB * report, printfnc print)
       "+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+\n"
       "|%63X|\n", ssrc, fci_id);
 
+  gst_printfnc_rtcp_afb_data(report, print);
 
 }
 
 void
-gst_printfnc_rtcp_afb_rmdi (gpointer data, printfnc print)
+gst_printfnc_rtcp_afb_data (GstRTCPFB * report, printfnc print)
 {
-  GstRTCPAFB_RMDIRecord *record;
-  GstRTCPAFB_RMDI *fbm; //feedback message
-  guint8 rsvd, records_num;
-  guint16 length;
-  gint i;
-  fbm = data;
-  gst_rtcp_afb_rmdi_getdown(fbm, &rsvd, &records_num, &length);
-  print (
-      "+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+\n"
-      "|%15d|%31hu|%15d|\n"
-      ,
-      rsvd,
-      records_num,
-      length
-      );
+  gchar fci_data[1000];
+  guint fci_len, i;
 
-  record = &fbm->records[0];
-  for(i=0; i< records_num; ++i, ++record){
-      guint16 HSSN,disc_packets_num;
-      guint32 owd;
-      gst_rtcp_afb_rmdi_record_getdown(record, &HSSN, &disc_packets_num, &owd);
-      print (
-            "+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+\n"
-            "|%31hu|%31hu|\n"
-            "+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+\n"
-            "|%63X|\n"
-          ,
-          g_ntohs(record->HSSN), g_ntohs(record->disc_packets_num),
-          g_ntohl(record->owd_sample)
-          );
+  gst_rtcp_afb_getdown_fci_data(report, fci_data, &fci_len);
+  for(i=0; i<fci_len; i+=4){
+      print ("+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+\n"
+            "|%63X|\n",
+            *((guint32*)(fci_data + i))
+            );
   }
 }
 

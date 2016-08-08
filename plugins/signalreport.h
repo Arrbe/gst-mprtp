@@ -17,16 +17,28 @@
 
 typedef struct _MPRTPSubflowFBRACngCtrlerParams{
   //parameters can be changed
-  gint32     max_rate;
-  gint32     min_rate;
+  GstClockTime        min_approve_interval;
+  gdouble             approve_min_factor;
+  gdouble             approve_max_factor;
+  gint32              min_ramp_up_bitrate;
+  gint32              max_ramp_up_bitrate;
+  gint32              min_target_bitrate;
+  gint32              max_target_bitrate;
+  gdouble             approvement_epsilon;
 
-}MPRTPSubflowMARCCngCtrlerParams;
+  gdouble             discard_dist_treshold;
+  gdouble             discard_cong_treshold;
+  gdouble             owd_corr_cng_th;
+
+  gdouble             owd_corr_dist_th;
+
+}MPRTPSubflowFBRA2CngCtrlerParams;
 
 typedef struct _MPRTPSubflowMARCRateController{
   guint32 target_bitrate;
   guint32 goodput_bitrate;
   guint32 sending_bitrate;
-  MPRTPSubflowMARCCngCtrlerParams cngctrler;
+  MPRTPSubflowFBRA2CngCtrlerParams cngctrler;
 }MPRTPSubflowFECBasedRateAdaption;
 
 typedef struct _MPRTPSubflowManualRateController{

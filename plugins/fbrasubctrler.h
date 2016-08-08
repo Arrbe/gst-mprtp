@@ -10,11 +10,11 @@
 
 #include <gst/gst.h>
 #include "mprtpspath.h"
-#include "bintree.h"
 #include "sndratedistor.h"
 #include "reportproc.h"
-#include "rmdiproc.h"
 #include "signalreport.h"
+#include "fbrafbproc.h"
+#include "fbratargetctrler.h"
 
 
 typedef struct _FBRASubController FBRASubController;
@@ -40,40 +40,55 @@ struct _FBRASubController
   GRWLock                   rwmutex;
   GstClock*                 sysclock;
   MPRTPSPath*               path;
-  RMDIProcessor*            fb_processor;
-  RMDIProcessorResult       rmdi_result;
 
   GstClockTime              made;
-  GstClockTime              disable_controlling;
+//  gboolean                  disable_controlling;
+  GstClockTime              last_executed;
+  GstClockTime              disable_end;
   guint                     measurements_num;
 
   gint32                    monitored_bitrate;
   guint32                   monitored_packets;
   gint32                    bottleneck_point;
+
   gint32                    max_target_point;
   gint32                    min_target_point;
-  gint32                    target_bitrate;
-  gint32                    target_bitrate_t1;
-  GstClockTime              last_decrease;
+//  gint32                    target_bitrate;
+//  gint32                    target_bitrate_t1;
+  GstClockTime              last_tr_changed;
   GstClockTime              last_settled;
-  GstClockTime              last_increase;
 
-  GstClockTime              last_report_arrived_t1;
-  GstClockTime              last_report_arrived;
-  GstClockTime              report_interval;
+  gdouble                   rand_factor;
+
+  GstClockTime              last_fb_arrived;
 
   gboolean                  enabled;
 
+  FBRAFBProcessor*          fbprocessor;
+  FBRAFBProcessorStat       fbstat;
+  FBRATargetCtrler*         targetctrler;
   //Need for monitoring
   guint                     monitoring_interval;
   GstClockTime              monitoring_started;
+  GstClockTime              increasement_started;
 
   guint                     pending_event;
   SubRateAction             stage_fnc;
 
   GstClockTime              congestion_detected;
+  gboolean                  owd_approvement;
+
+  guint                     consecutive_ok;
+  guint                     consecutive_nok;
+  GstClockTime              last_distorted;
+  GstClockTime              last_reduced;
+
+  GstClockTime              adjustment_time;
+  GstClockTime              last_approved;
 
   gpointer                  priv;
+
+  guint                     last_rtp_size;
 
 };
 
@@ -84,7 +99,7 @@ struct _FBRASubControllerClass{
 GType fbrasubctrler_get_type (void);
 FBRASubController *make_fbrasubctrler(MPRTPSPath *path);
 
-gboolean fbrasubctrler_path_approver(gpointer data,    GstBuffer *buffer);
+gboolean fbrasubctrler_path_approver(gpointer data, GstRTPBuffer *buffer);
 
 void fbrasubctrler_enable(FBRASubController *this);
 void fbrasubctrler_disable(FBRASubController *this);
@@ -95,6 +110,4 @@ void fbrasubctrler_time_update(FBRASubController *this);
 void fbrasubctrler_signal_update(FBRASubController *this, MPRTPSubflowFECBasedRateAdaption *params);
 void fbrasubctrler_signal_request(FBRASubController *this, MPRTPSubflowFECBasedRateAdaption *result);
 
-void fbrasubctrler_logging2csv(FBRASubController *this);
-void fbrasubctrler_logging(FBRASubController *this);
 #endif /* FBRASUBCTRLER_H_ */

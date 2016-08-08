@@ -90,10 +90,6 @@ mprtps_path_reset (MPRTPSPath * this)
   this->flags = MPRTPS_PATH_FLAG_ACTIVE |
       MPRTPS_PATH_FLAG_NON_CONGESTED | MPRTPS_PATH_FLAG_NON_LOSSY;
 
-  if(this->packetstracker){
-    packetssndtracker_reset(this->packetstracker);
-  }
-
   this->monitoring_interval = 0;
 
 }
@@ -357,7 +353,7 @@ mprtps_path_set_keep_alive_period(MPRTPSPath *this, GstClockTime period)
 }
 
 void
-mprtps_path_set_approval_process(MPRTPSPath *this, gpointer data, gboolean(*approval)(gpointer, GstBuffer *))
+mprtps_path_set_approval_process(MPRTPSPath *this, gpointer data, gboolean(*approval)(gpointer, GstRTPBuffer *))
 {
   THIS_WRITELOCK (this);
   this->approval = approval;
@@ -365,46 +361,22 @@ mprtps_path_set_approval_process(MPRTPSPath *this, gpointer data, gboolean(*appr
   THIS_WRITEUNLOCK (this);
 }
 
-gboolean mprtps_path_approve_request(MPRTPSPath *this, GstBuffer *buf)
+gboolean mprtps_path_approve_request(MPRTPSPath *this, GstRTPBuffer *rtp)
 {
   gboolean result;
   THIS_READLOCK(this);
-  result = !this->approval ? TRUE : this->approval(this->approval_data, buf);
+  result = !this->approval ? TRUE : this->approval(this->approval_data, rtp);
   THIS_READUNLOCK(this);
   return result;
 }
 
-PacketsSndTracker *mprtps_path_ref_packetstracker(MPRTPSPath *this)
-{
-  PacketsSndTracker *result;
-  THIS_WRITELOCK(this);
-  if(!this->packetstracker){
-    result = this->packetstracker = make_packetssndtracker();
-  }else{
-    result = g_object_ref(this->packetstracker);
-  }
-  THIS_WRITEUNLOCK(this);
-  return result;
-}
 
-
-PacketsSndTracker* mprtps_path_unref_packetstracker(MPRTPSPath *this)
+void mprtps_path_set_packetstracker(MPRTPSPath *this, void(*packetstracker)(gpointer,  guint, guint16), gpointer data)
 {
-  PacketsSndTracker *result = NULL;
   THIS_WRITELOCK(this);
-  if(!this->packetstracker){
-    goto done;
-  }
-  result = this->packetstracker;
-  if(1 < this->packetstracker->object.ref_count){
-    g_object_unref(this->packetstracker);
-    goto done;
-  }
-  g_object_unref(this->packetstracker);
-  result = this->packetstracker = NULL;
-done:
+  this->packetstracker = packetstracker;
+  this->packetstracker_data = data;
   THIS_WRITEUNLOCK(this);
-  return result;
 }
 
 
@@ -506,7 +478,7 @@ _refresh_stat(MPRTPSPath * this,
   this->total_sent_payload_bytes += payload_bytes;
 
   if(this->packetstracker){
-    packetssndtracker_add(this->packetstracker, payload_bytes, sn);
+    this->packetstracker(this->packetstracker_data, payload_bytes, sn);
   }
 
 }

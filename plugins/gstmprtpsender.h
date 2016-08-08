@@ -51,6 +51,7 @@ struct _GstMprtpsender
   GstEvent *event_segment;
   GstEvent *event_caps;
 
+  GstClock *sysclock;
   GstMprtpsenderPrivate *priv;
 };
 

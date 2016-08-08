@@ -30,6 +30,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include "mprtplogger.h"
 
 #define THIS_READLOCK(this)
 #define THIS_READUNLOCK(this)
@@ -73,6 +74,12 @@ _processing_xr_discarded_bytes_block (
     GstRTCPXRDiscardedBlock * xrb,
     GstMPRTCPReportSummary* summary);
 
+void
+_processing_xr_discarded_packets_block (
+    ReportProcessor *this,
+    GstRTCPXRDiscardedBlock * xrb,
+    GstMPRTCPReportSummary* summary);
+
 static void
 _processing_afb (ReportProcessor *this,
                  GstRTCPFB *afb,
@@ -107,9 +114,18 @@ _logging(
     ReportProcessor *this,
     GstMPRTCPReportSummary* summary);
 
-//----------------------------------------------------------------------
-//--------- Private functions implementations to SchTree object --------
-//----------------------------------------------------------------------
+
+static gint
+_cmp_seq (guint16 x, guint16 y)
+{
+  if(x == y) return 0;
+  if(x < y && y - x < 32768) return -1;
+  if(x > y && x - y > 32768) return -1;
+  if(x < y && y - x > 32768) return 1;
+  if(x > y && x - y < 32768) return 1;
+  return 0;
+}
+
 
 void
 report_processor_class_init (ReportProcessorClass * klass)
@@ -171,7 +187,9 @@ void report_processor_process_mprtcp(ReportProcessor * this, GstBuffer* buffer, 
   result->updated = _now(this);
   block = gst_mprtcp_get_first_block(report);
   _processing_mprtcp_subflow_block(this, block, result);
-  _logging(this, result);
+
+  DISABLE_LINE _logging(this, result);
+
   gst_buffer_unmap(buffer, &map);
 }
 
@@ -291,6 +309,19 @@ _processing_xr_discarded_bytes_block (ReportProcessor *this,
                                &summary->XR.DiscardedBytes.discarded_bytes);
 }
 
+void
+_processing_xr_discarded_packets_block (ReportProcessor *this,
+                                GstRTCPXRDiscardedBlock * xrb,
+                                GstMPRTCPReportSummary* summary)
+{
+  summary->XR.DiscardedPackets.processed = TRUE;
+  gst_rtcp_xr_discarded_packets_getdown (xrb,
+                               &summary->XR.DiscardedPackets.interval_metric,
+                               &summary->XR.DiscardedPackets.early_bit,
+                               NULL,
+                               &summary->XR.DiscardedPackets.discarded_packets);
+}
+
 
 void
 _processing_afb (ReportProcessor *this,
@@ -349,11 +380,13 @@ _processing_xr_discarded_rle_block (ReportProcessor *this,
                         GstMPRTCPReportSummary* summary)
 {
   guint chunks_num;
-  GstRTCPXRChunk *chunk;
-  guint16 *i;
+  GstRTCPXRChunk chunk, *src;
+  guint chunk_i, bit_i;
+  guint16 seq;
 
   summary->XR.DiscardedRLE.processed = TRUE;
-
+  src = xrb->chunks;
+  summary->XR.DiscardedRLE.vector_length = 0;
   gst_rtcp_xr_discarded_rle_getdown(xrb,
                                     &summary->XR.DiscardedRLE.early_bit,
                                     &summary->XR.DiscardedRLE.thinning,
@@ -361,11 +394,15 @@ _processing_xr_discarded_rle_block (ReportProcessor *this,
                                     &summary->XR.DiscardedRLE.begin_seq,
                                     &summary->XR.DiscardedRLE.end_seq);
 
-  i = &summary->XR.DiscardedRLE.length;
+  seq = summary->XR.DiscardedRLE.begin_seq;
   chunks_num = gst_rtcp_xr_discarded_rle_block_get_chunks_num(xrb);
 
-  for(*i = 0, chunk = &xrb->chunks[0]; *i < chunks_num; ++chunk, ++*i){
-      gst_rtcp_xr_chunk_ntoh_cpy(&summary->XR.DiscardedRLE.chunks[*i], chunk);
+  for(chunk_i = 0; chunk_i < chunks_num; ++chunk_i){
+    gst_rtcp_xr_chunk_ntoh_cpy(&chunk, src + chunk_i);
+    for(bit_i = 0; bit_i < 15 && _cmp_seq(seq, summary->XR.DiscardedRLE.end_seq) <= 0; ++bit_i){
+      summary->XR.DiscardedRLE.vector[summary->XR.DiscardedRLE.vector_length++] =
+          0 < (chunk.Bitvector.bitvector & (guint16)(1<<bit_i)) ? TRUE : FALSE;
+    }
   }
 }
 
@@ -413,6 +450,9 @@ again:
         break;
     case GST_RTCP_XR_DISCARDED_BYTES_BLOCK_TYPE_IDENTIFIER:
         _processing_xr_discarded_bytes_block(this, (GstRTCPXRDiscardedBlock*) block, summary);
+        break;
+    case GST_RTCP_XR_DISCARDED_PACKETS_BLOCK_TYPE_IDENTIFIER:
+        _processing_xr_discarded_packets_block(this, (GstRTCPXRDiscardedBlock*) block, summary);
         break;
     default:
       GST_WARNING_OBJECT(this, "Unrecognized XR block to process");
@@ -517,17 +557,15 @@ void _logging(ReportProcessor *this, GstMPRTCPReportSummary* summary)
                    "-------------------------- XR_RFC7097 ---------------------------\n"
                    "begin_seq: %hu\n"
                    "end_seq:   %hu\n"
-                   "length:    %d\n"
                    ,
                    summary->XR.DiscardedRLE.begin_seq,
-                   summary->XR.DiscardedRLE.end_seq,
-                   summary->XR.DiscardedRLE.length
+                   summary->XR.DiscardedRLE.end_seq
       );
-      for(i=0; i<summary->XR.DiscardedRLE.length; ++i){
+      for(i=0; i<summary->XR.DiscardedRLE.vector_length; ++i){
           mprtp_logger(this->logfile,
                            "value %d:    %X\n"
                            ,
-                           i, summary->XR.DiscardedRLE.chunks[i].Bitvector.bitvector
+                           i, summary->XR.DiscardedRLE.vector[i]
               );
       }
     }

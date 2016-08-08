@@ -27,7 +27,6 @@
 #include "gstmprtcpbuffer.h"
 #include <math.h>
 #include <string.h>
-#include "bintree.h"
 #include "mprtpspath.h"
 #include "rtpfecbuffer.h"
 
@@ -44,23 +43,6 @@
 #define THIS_WRITEUNLOCK(this)
 
 
-typedef struct _FrameNode{
-  GstMpRTPBuffer* mprtp;
-  guint16         seq;
-  gboolean        marker;
-}FrameNode;
-
-typedef struct _Frame
-{
-  guint32         timestamp;
-  gboolean        ready;
-  gboolean        marked;
-  gboolean        intact;
-  guint32         last_seq;
-  GstClockTime    added;
-  GList*          nodes;
-}Frame;
-
 static gint
 _cmp_uint16 (guint16 x, guint16 y)
 {
@@ -72,54 +54,16 @@ _cmp_uint16 (guint16 x, guint16 y)
   return 0;
 }
 
-static gint
-_cmp_uint32 (guint32 x, guint32 y)
-{
-  if(x == y) return 0;
-  if(x < y && y - x < 2147483648) return -1;
-  if(x > y && x - y > 2147483648) return -1;
-  if(x < y && y - x > 2147483648) return 1;
-  if(x > y && x - y < 2147483648) return 1;
-  return 0;
-}
-
-
-static gint _find_frame_helper(gconstpointer ptr2frame, gconstpointer ptr2searched_ts)
-{
-  const guint32 *timestamp;
-  const Frame* frame;
-  timestamp = ptr2searched_ts;
-  frame = ptr2frame;
-  return frame->timestamp == *timestamp ? 0 : -1;
-}
-
-static int
-_compare_nodes (gconstpointer a, gconstpointer b)
-{
-  const FrameNode *ai = a;
-  const FrameNode *bi = b;
-
-  if(_cmp_uint16(ai->seq, bi->seq) > 0)
-    return 1;
-  else if (ai->seq == bi->seq)
-    return 0;
-  else
-    return -1;
-}
-
-static int
-_compare_frames (gconstpointer a, gconstpointer b, gpointer data)
-{
-  const Frame *ai = a;
-  const Frame *bi = b;
-
-  if(_cmp_uint32(ai->timestamp, bi->timestamp) > 0)
-    return 1;
-  else if (ai->timestamp == bi->timestamp)
-    return 0;
-  else
-    return -1;
-}
+//static gint
+//_cmp_uint32 (guint32 x, guint32 y)
+//{
+//  if(x == y) return 0;
+//  if(x < y && y - x < 2147483648) return -1;
+//  if(x > y && x - y > 2147483648) return -1;
+//  if(x < y && y - x > 2147483648) return 1;
+//  if(x > y && x - y < 2147483648) return 1;
+//  return 0;
+//}
 
 GST_DEBUG_CATEGORY_STATIC (packetsrcvqueue_debug_category);
 #define GST_CAT_DEFAULT packetsrcvqueue_debug_category
@@ -132,10 +76,6 @@ G_DEFINE_TYPE (PacketsRcvQueue, packetsrcvqueue, G_TYPE_OBJECT);
 //----------------------------------------------------------------------
 
 static void packetsrcvqueue_finalize (GObject * object);
-static Frame* _make_frame(PacketsRcvQueue *this, GstMpRTPBuffer *mprtp);
-static FrameNode* _make_framenode(PacketsRcvQueue *this, GstMpRTPBuffer *mprtp);
-static void _csv_logging(gpointer data);
-static void _readable_logging(gpointer data);
 //----------------------------------------------------------------------
 //--------- Private functions implementations to SchTree object --------
 //----------------------------------------------------------------------
@@ -160,43 +100,23 @@ packetsrcvqueue_finalize (GObject * object)
   PacketsRcvQueue *this;
   this = PACKETSRCVQUEUE(object);
   g_object_unref(this->sysclock);
-  g_object_unref(this->frames);
-  g_object_unref(this->urgent);
-  g_object_unref(this->normal);
+  g_object_unref(this->discarded);
+  g_object_unref(this->packets);
 }
 
-static void _samplings_stat_pipe(gpointer data, PercentileTrackerPipeData* stat)
-{
-  PacketsRcvQueue * this = data;
-  if(!stat->percentile){
-    this->mean_rate = this->max_playoutrate;
-    return;
-  }
-
-  this->mean_rate = stat->percentile;
-}
 
 void
 packetsrcvqueue_init (PacketsRcvQueue * this)
 {
   g_rw_lock_init (&this->rwmutex);
   this->sysclock = gst_system_clock_obtain();
-  this->frames = g_queue_new();
-  this->urgent = g_queue_new();
-  this->normal = g_queue_new();
+  this->discarded = g_queue_new();
+  this->packets = g_queue_new();
 
-  this->bytes_in_normal_queue = 0;
-
-  this->dsampling = make_percentiletracker(100, 50);
-  percentiletracker_set_treshold(this->dsampling, 60 * GST_SECOND);
-  percentiletracker_set_stats_pipe(this->dsampling, _samplings_stat_pipe, this);
   this->desired_framenum = 1;
-  this->min_playoutrate = .01 * GST_SECOND;
-  this->max_playoutrate =  .04 * GST_SECOND;
+  this->high_watermark = .01 * GST_SECOND;
+  this->low_watermark =  .04 * GST_SECOND;
   this->spread_factor = 2.;
-
-  mprtp_logger_add_logging_fnc(_csv_logging,this, 1, &this->rwmutex);
-  mprtp_logger_add_logging_fnc(_readable_logging,this, 10, &this->rwmutex);
 
 }
 
@@ -235,18 +155,18 @@ packetsrcvqueue_set_desired_framenum(PacketsRcvQueue *this, guint desired_framen
 
 
 void
-packetsrcvqueue_set_min_playoutrate(PacketsRcvQueue *this, GstClockTime min_playoutrate)
+packetsrcvqueue_set_high_watermark(PacketsRcvQueue *this, GstClockTime high_watermark)
 {
   THIS_WRITELOCK (this);
-  this->min_playoutrate = min_playoutrate;
+  this->high_watermark = high_watermark;
   THIS_WRITEUNLOCK (this);
 }
 
 void
-packetsrcvqueue_set_max_playoutrate(PacketsRcvQueue *this, GstClockTime max_playoutrate)
+packetsrcvqueue_set_low_watermark(PacketsRcvQueue *this, GstClockTime low_watermark)
 {
   THIS_WRITELOCK (this);
-  this->max_playoutrate = max_playoutrate;
+  this->low_watermark = low_watermark;
   THIS_WRITEUNLOCK (this);
 }
 
@@ -258,199 +178,83 @@ packetsrcvqueue_flush(PacketsRcvQueue *this)
   THIS_WRITEUNLOCK (this);
 }
 
-void
-packetsrcvqueue_set_spread_factor(PacketsRcvQueue *this, gdouble spread_factor)
+static gint _mprtp_queue_sort_helper(gconstpointer a, gconstpointer b, gpointer user_data)
 {
-  THIS_WRITELOCK (this);
-  this->spread_factor = spread_factor;
-  THIS_WRITEUNLOCK (this);
+  const GstMpRTPBuffer *ai = a;
+  const GstMpRTPBuffer *bi = b;
+  return _cmp_uint16(ai->abs_seq, bi->abs_seq);
 }
 
-GstClockTime
-packetsrcvqueue_get_playout_point(PacketsRcvQueue *this)
+void packetsrcvqueue_push_discarded(PacketsRcvQueue *this, GstMpRTPBuffer *mprtp)
 {
-  GstClockTime result;
-  gint actual_framenum;
-  gdouble factor;
-  THIS_WRITELOCK (this);
-  actual_framenum = g_queue_get_length(this->frames);
-  if(!this->sampling_t1 || !this->sampling_t2){
-    result = _now(this) + this->max_playoutrate;
+  GstMpRTPBuffer *head;
+  THIS_WRITELOCK(this);
+  if(g_queue_is_empty(this->packets)){
+    g_queue_push_tail(this->packets, mprtp);
     goto done;
   }
-  if(this->sampling_t2 < this->sampling_t1){
-    percentiletracker_add(this->dsampling, this->sampling_t1 - this->sampling_t2);
-  }
-  if(!actual_framenum){
-    result = _now(this) + this->max_playoutrate;
+  head = g_queue_peek_head(this->packets);
+  if(_cmp_uint16(mprtp->abs_seq, head->abs_seq) < 0){
+    g_queue_push_tail(this->discarded, mprtp);
     goto done;
   }
-  factor = pow(this->spread_factor, this->desired_framenum - actual_framenum);
-  this->playout_rate = CONSTRAIN(this->min_playoutrate, this->max_playoutrate, this->mean_rate * factor);
-  result = _now(this) + this->playout_rate;
+  g_queue_insert_sorted(this->packets, mprtp, _mprtp_queue_sort_helper, NULL);
 done:
-  THIS_WRITEUNLOCK (this);
-  return result;
+  THIS_WRITEUNLOCK(this);
 }
-
 
 
 void packetsrcvqueue_push(PacketsRcvQueue *this, GstMpRTPBuffer *mprtp)
 {
-  Frame *frame;
-  GList *it;
   THIS_WRITELOCK(this);
-  if(g_queue_is_empty(this->frames)){
-    this->bytes_in_normal_queue += mprtp->payload_bytes;
-    g_queue_push_tail(this->frames, _make_frame(this, mprtp));
-    goto done;
-  }
-  if(this->played_timestamp && _cmp_uint32(mprtp->timestamp, this->played_timestamp) < 0){
-    this->bytes_in_urgent_queue += mprtp->payload_bytes;
-    g_queue_push_tail(this->urgent, mprtp);
-    goto done;
-  }
-  this->bytes_in_normal_queue += mprtp->payload_bytes;
-  it = g_queue_find_custom(this->frames, &mprtp->timestamp, _find_frame_helper);
-  if(it){
-    frame = it->data;
-    frame->nodes = g_list_insert_sorted(frame->nodes, _make_framenode(this, mprtp), _compare_nodes);
-    goto done;
-  }
-  frame = _make_frame(this, mprtp);
-  g_queue_insert_sorted(this->frames, frame, _compare_frames, NULL);
-done:
+//  g_print("%hu is transferred at %d\n", mprtp->abs_seq, mprtp->subflow_id);
+  g_queue_push_tail(this->packets, mprtp);
   THIS_WRITEUNLOCK(this);
 }
 
-//Call after the playout point reached
-void packetsrcvqueue_refresh(PacketsRcvQueue *this)
+GstMpRTPBuffer* packetsrcvqueue_pop(PacketsRcvQueue *this)
 {
-  GList *it = NULL;
-  Frame *head;
-  FrameNode* node;
-  GstClockTime sndsum = 0;
-  guint sndnum = 0;
+  GstMpRTPBuffer *result = NULL;
+  gint32 packets_num = 0;
   THIS_WRITELOCK(this);
-again:
-  if(g_queue_is_empty(this->frames)){
-    this->flush = FALSE;
+  if(!this->playout_allowed || g_queue_is_empty(this->packets)){
     goto done;
   }
-  head = g_queue_pop_head(this->frames);
-  for(it = head->nodes; it; it = it->next){
-    node = it->data;
-    sndsum += get_epoch_time_from_ntp_in_ns(node->mprtp->abs_snd_ntp_time);
-    ++sndnum;
-    g_queue_push_tail(this->normal, node->mprtp);
-    g_slice_free(FrameNode, node);
+  if(!this->low_watermark || !this->high_watermark){
+    result = g_queue_pop_head(this->packets);
+    goto done;
   }
-  this->sampling_t2 = this->sampling_t1;
-  this->sampling_t1 = sndsum / sndnum;
-  g_slice_free(Frame, head);
-  if(this->flush){
-    goto again;
+
+  packets_num = g_queue_get_length(this->packets);
+  if(!this->hwmark_reached){
+    if(this->high_watermark < packets_num){
+       this->hwmark_reached = TRUE;
+    }
+    goto done;
   }
+  if(packets_num < this->low_watermark){
+    this->hwmark_reached = FALSE;
+  }
+  result = g_queue_pop_head(this->packets);
 done:
   THIS_WRITEUNLOCK(this);
+  return result;
 }
 
-GstMpRTPBuffer* packetsrcvqueue_pop_normal(PacketsRcvQueue *this)
+GstMpRTPBuffer* packetsrcvqueue_pop_discarded(PacketsRcvQueue *this)
 {
   GstMpRTPBuffer *result = NULL;
   THIS_WRITELOCK(this);
-  if(!this->playout_allowed || g_queue_is_empty(this->normal)){
+  if(!this->playout_allowed || g_queue_is_empty(this->discarded)){
     goto done;
   }
-  result = g_queue_pop_head(this->normal);
-  this->bytes_in_normal_queue -= result->payload_bytes;
-  this->played_timestamp = result->timestamp;
+  result = g_queue_pop_head(this->discarded);
 done:
   THIS_WRITEUNLOCK(this);
   return result;
 }
 
-GstMpRTPBuffer* packetsrcvqueue_pop_urgent(PacketsRcvQueue *this)
-{
-  GstMpRTPBuffer *result = NULL;
-  THIS_WRITELOCK(this);
-  if(!this->playout_allowed || g_queue_is_empty(this->urgent)){
-    goto done;
-  }
-  result = g_queue_pop_head(this->urgent);
-  this->bytes_in_urgent_queue -= result->payload_bytes;
-done:
-  THIS_WRITEUNLOCK(this);
-  return result;
-}
 
-Frame* _make_frame(PacketsRcvQueue *this, GstMpRTPBuffer *mprtp)
-{
-  Frame *result;
-  result = g_slice_new0(Frame);
-  result->added = _now(this);
-  result->timestamp = mprtp->timestamp;
-  result->nodes = g_list_prepend(result->nodes, _make_framenode(this, mprtp));
-  return result;
-}
-
-FrameNode* _make_framenode(PacketsRcvQueue *this, GstMpRTPBuffer *mprtp)
-{
-  FrameNode *result;
-  result = g_slice_new0(FrameNode);
-  result->seq = mprtp->abs_seq;
-  result->mprtp = mprtp;
-  return result;
-}
-
-void _csv_logging(gpointer data)
-{
-  PacketsRcvQueue *this = data;
-    mprtp_logger("packetsrcvqueue.csv",
-                 "%d,%d,%d,%lu\n"
-                 ,
-                 g_queue_get_length(this->frames),
-                 this->bytes_in_normal_queue,
-                 this->bytes_in_urgent_queue,
-                 this->playout_rate
-                 );
-}
-
-void _readable_logging(gpointer data)
-{
-  PacketsRcvQueue *this = data;
-  mprtp_logger("packetsrcvqueue.log",
-               "----------------------------------------------------\n"
-               "Seconds: %lu\n"
-               "Min playoutrate: %lu\n"
-               "Max playoutrate: %lu\n"
-               "Mean playoutrate: %lu\n"
-               "Actual playoutrate: %lu\n"
-               "desired framenum: %d\n"
-               "actual framenum: %d\n"
-               "bytes in normal queue: %d\n"
-               "bytes in urgent queue: %d\n"
-               "Flush: %d\n"
-               "Playout allowed: %d\n"
-
-               ,
-
-               GST_TIME_AS_SECONDS(_now(this) - this->made),
-               this->min_playoutrate,
-               this->max_playoutrate,
-               this->mean_rate,
-               this->playout_rate,
-               this->desired_framenum,
-               g_queue_get_length(this->frames),
-               this->bytes_in_normal_queue,
-               this->bytes_in_urgent_queue,
-               this->flush,
-               this->playout_allowed
-               );
-
-}
-
-#undef DEBUG_PRINT_TOOLS
 #undef THIS_WRITELOCK
 #undef THIS_WRITEUNLOCK
 #undef THIS_READLOCK

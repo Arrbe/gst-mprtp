@@ -10,6 +10,7 @@
 
 #include <gst/gst.h>
 #include "packetsrcvqueue.h"
+#include "lib_swplugins.h"
 
 typedef struct _StreamJoiner StreamJoiner;
 typedef struct _StreamJoinerClass StreamJoinerClass;
@@ -26,8 +27,8 @@ typedef struct _StreamJoinerClass StreamJoinerClass;
 #define MPRTP_SENDER_SCHTREE_MAX_PATH_NUM 32
 #define MAX_SKEWS_ARRAY_LENGTH 256
 
-typedef struct _FrameNode FrameNode;
-typedef struct _Frame Frame;
+//typedef struct _FrameNode FrameNode;
+//typedef struct _Frame Frame;
 
 
 struct _StreamJoiner
@@ -42,15 +43,18 @@ struct _StreamJoiner
   GstClockTime         join_min_treshold;
   GstClockTime         join_max_treshold;
   GstClockTime         last_join_refresh;
-  PercentileTracker*   delays;
+  SlidingWindow*       delays;
 
   gdouble              betha;
 
-  guint                bytes_in_queue;
-  guint                packets_in_queue;
+  GQueue*              packets_by_seq;
+  GQueue*              packets_by_arrival;
 
   PacketsRcvQueue*     rcvqueue;
-  GQueue*              retained_buffers;
+
+  gboolean             flush;
+  gboolean             HFSN_initialized;
+  guint16              HFSN;
 
 };
 struct _StreamJoinerClass{

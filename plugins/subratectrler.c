@@ -24,6 +24,7 @@
 #include <gst/rtp/gstrtpbuffer.h>
 #include <gst/rtp/gstrtcpbuffer.h>
 #include "subratectrler.h"
+#include "fbrasubctrler.h"
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
@@ -50,13 +51,6 @@ void subratectrler_finalize (GObject * object);
 static void _enable(SubflowRateController *this);
 static void _disable(SubflowRateController *this);
 
-static void
-_logging(
-    gpointer data);
-
-static void
-_log2csv(
-    gpointer data);
 
 #define _now(this) (gst_clock_get_time(this->sysclock))
 
@@ -93,8 +87,6 @@ subratectrler_init (SubflowRateController * this)
   this->sysclock = gst_system_clock_obtain();
   g_rw_lock_init (&this->rwmutex);
 
-  mprtp_logger_add_logging_fnc(_logging, this, 2, &this->rwmutex);
-  mprtp_logger_add_logging_fnc(_log2csv, this, 1, &this->rwmutex);
 }
 
 
@@ -116,7 +108,8 @@ void subratectrler_time_update(SubflowRateController *this)
   }
 
   switch(this->type){
-    case SUBRATECTRLER_FBRA_MARC:
+    case SUBRATECTRLER_FBRA:
+      fbrasubctrler_time_update(this->controller);
       break;
     default:
     case SUBRATECTRLER_NO_CTRL:
@@ -137,7 +130,8 @@ void subratectrler_signal_update(SubflowRateController *this, MPRTPSubflowRateCo
   }
 
   switch(this->type){
-    case SUBRATECTRLER_FBRA_MARC:
+    case SUBRATECTRLER_FBRA:
+      fbrasubctrler_signal_update(this->controller, &params->fbra);
       break;
     default:
     case SUBRATECTRLER_NO_CTRL:
@@ -158,7 +152,8 @@ void subratectrler_signal_request(SubflowRateController *this, MPRTPSubflowRateC
   }
 
   switch(this->type){
-    case SUBRATECTRLER_FBRA_MARC:
+    case SUBRATECTRLER_FBRA:
+      fbrasubctrler_signal_request(this->controller, &params->fbra);
       break;
     default:
     case SUBRATECTRLER_NO_CTRL:
@@ -193,7 +188,8 @@ void subratectrler_report_update(
   }
 
   switch(this->type){
-    case SUBRATECTRLER_FBRA_MARC:
+    case SUBRATECTRLER_FBRA:
+      fbrasubctrler_report_update(this->controller, summary);
       break;
     default:
     case SUBRATECTRLER_NO_CTRL:
@@ -209,7 +205,7 @@ done:
 
 gboolean subratectrler_packet_approver(
                          gpointer data,
-                         GstBuffer *buf)
+                         GstRTPBuffer *rtp)
 {
   gboolean result = TRUE;
   SubflowRateController *this = data;
@@ -217,9 +213,9 @@ gboolean subratectrler_packet_approver(
   if(!this->enabled){
     goto done;
   }
-
   switch(this->type){
-    case SUBRATECTRLER_FBRA_MARC:
+    case SUBRATECTRLER_FBRA:
+      result = fbrasubctrler_path_approver(this->controller, rtp);
       break;
     default:
     case SUBRATECTRLER_NO_CTRL:
@@ -238,7 +234,9 @@ done:
 void _enable(SubflowRateController *this)
 {
   switch(this->type){
-    case SUBRATECTRLER_FBRA_MARC:
+    case SUBRATECTRLER_FBRA:
+      this->controller = make_fbrasubctrler(this->path);
+      fbrasubctrler_enable(this->controller);
       break;
     default:
     case SUBRATECTRLER_NO_CTRL:
@@ -251,7 +249,9 @@ void _enable(SubflowRateController *this)
 void _disable(SubflowRateController *this)
 {
   switch(this->type){
-    case SUBRATECTRLER_FBRA_MARC:
+    case SUBRATECTRLER_FBRA:
+      fbrasubctrler_disable(this->controller);
+      g_object_unref(this->controller);
       break;
     default:
     case SUBRATECTRLER_NO_CTRL:
@@ -261,31 +261,3 @@ void _disable(SubflowRateController *this)
   this->enabled = FALSE;
 }
 
-static void
-_logging(
-    gpointer data)
-{
-  SubflowRateController *this = data;
-
-  switch(this->type){
-    case SUBRATECTRLER_FBRA_MARC:
-      break;
-    default:
-    case SUBRATECTRLER_NO_CTRL:
-      break;
-  }
-}
-
-static void
-_log2csv(
-    gpointer data)
-{
-  SubflowRateController *this = data;
-  switch(this->type){
-    case SUBRATECTRLER_FBRA_MARC:
-      break;
-    default:
-    case SUBRATECTRLER_NO_CTRL:
-      break;
-  }
-}

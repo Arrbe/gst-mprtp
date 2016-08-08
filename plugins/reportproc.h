@@ -38,12 +38,12 @@ typedef struct _GstMPRTCPXRReportSummary{
 
   struct{
     gboolean          processed;
-    GstRTCPXRChunk    chunks[100];
-    guint16           length;
     gboolean          early_bit;
     guint8            thinning;
     guint16           begin_seq;
     guint16           end_seq;
+    gboolean          vector[1024];
+    guint             vector_length;
   }DiscardedRLE;
 
   struct{
@@ -52,6 +52,13 @@ typedef struct _GstMPRTCPXRReportSummary{
     gboolean          early_bit;
     guint32           discarded_bytes;
   }DiscardedBytes;
+
+  struct{
+    gboolean          processed;
+    guint8            interval_metric;
+    gboolean          early_bit;
+    guint32           discarded_packets;
+  }DiscardedPackets;
 }GstMPRTCPXRReportSummary;
 
 struct _GstMPRTCPReportSummary{

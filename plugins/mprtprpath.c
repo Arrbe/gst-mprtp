@@ -31,7 +31,6 @@ static void mprtpr_path_finalize (GObject * object);
 static void mprtpr_path_reset (MpRTPRPath * this);
 static gint _cmp_seq32 (guint32 x, guint32 y);
 static void _add_delay(MpRTPRPath *this, GstClockTime delay);
-static void _add_skew(MpRTPRPath *this, gint64 skew);
 
 void
 mprtpr_path_class_init (MpRTPRPathClass * klass)
@@ -64,11 +63,6 @@ mprtpr_path_init (MpRTPRPath * this)
 {
   g_rw_lock_init (&this->rwmutex);
   this->sysclock = gst_system_clock_obtain ();
-  this->delays = make_percentiletracker(512, 50);
-  percentiletracker_set_treshold(this->delays, 1000 * GST_MSECOND);
-
-  this->skews = make_percentiletracker2(100, 50);
-  percentiletracker2_set_treshold(this->skews, 2 * GST_SECOND);
   this->spike_var_treshold = 20 * GST_MSECOND;
   this->spike_delay_treshold = 375 * GST_MSECOND;
   mprtpr_path_reset (this);
@@ -136,16 +130,12 @@ void mprtpr_path_get_regular_stats(MpRTPRPath *this,
   THIS_READUNLOCK (this);
 }
 
-void mprtpr_path_get_owd_stats(MpRTPRPath *this,
-                                 GstClockTime *median,
-                                 GstClockTime *min,
-                                 GstClockTime* max)
+void mprtpr_path_get_total_receivements (MpRTPRPath * this,
+                                              guint32 *total_packets_received,
+                                              guint32 *total_payload_received)
 {
-  GstClockTime median_delay;
-  THIS_READLOCK (this);
-  median_delay = percentiletracker_get_stats(this->delays, min, max, NULL);
-  if(median) *median = median_delay;
-  THIS_READUNLOCK (this);
+  if(total_packets_received) *total_packets_received = this->total_packets_received;
+  if(total_payload_received) *total_payload_received = this->total_payload_received;
 }
 
 gboolean
@@ -168,74 +158,12 @@ mprtpr_path_set_spike_treshold(MpRTPRPath *this, GstClockTime delay_treshold, Gs
 }
 
 
-gboolean
-mprtpr_path_is_urgent_request(MpRTPRPath *this)
-{
-  gboolean result;
-  THIS_WRITELOCK (this);
-  result = this->urgent;
-  this->urgent = FALSE;
-  THIS_WRITEUNLOCK (this);
-  return result;
-}
-
-void
-mprtpr_path_set_discard_treshold(MpRTPRPath *this, GstClockTime treshold)
-{
-  THIS_WRITELOCK (this);
-  if(this->packetstracker){
-    packetsrcvtracker_set_discarded_treshold(this->packetstracker, treshold);
-  }
-  THIS_WRITEUNLOCK (this);
-}
-
-void
-mprtpr_path_set_lost_treshold(MpRTPRPath *this, GstClockTime treshold)
-{
-  THIS_WRITELOCK (this);
-  if(this->packetstracker){
-    packetsrcvtracker_set_lost_treshold(this->packetstracker, treshold);
-  }
-  THIS_WRITEUNLOCK (this);
-}
-
-PacketsRcvTracker *mprtpr_path_ref_packetstracker(MpRTPRPath *this)
-{
-  PacketsRcvTracker *result;
-  THIS_WRITELOCK(this);
-  if(!this->packetstracker){
-    result = this->packetstracker = make_packetsrcvtracker();
-  }else{
-    result = g_object_ref(this->packetstracker);
-  }
-  THIS_WRITEUNLOCK(this);
-  return result;
-}
-
-PacketsRcvTracker* mprtpr_path_unref_packetstracker(MpRTPRPath *this)
-{
-  PacketsRcvTracker *result = NULL;
-  THIS_WRITELOCK(this);
-  if(!this->packetstracker){
-    goto done;
-  }
-  result = this->packetstracker;
-  if(1 < this->packetstracker->object.ref_count){
-    g_object_unref(this->packetstracker);
-    goto done;
-  }
-  g_object_unref(this->packetstracker);
-  result = this->packetstracker = NULL;
-done:
-  THIS_WRITEUNLOCK(this);
-  return result;
-}
 
 void
 mprtpr_path_set_owd_window_treshold(MpRTPRPath *this, GstClockTime treshold)
 {
   THIS_WRITELOCK (this);
-  percentiletracker_set_treshold(this->delays, treshold);
+
   THIS_WRITEUNLOCK (this);
 }
 
@@ -249,6 +177,15 @@ mprtpr_path_set_spike_delay_treshold(MpRTPRPath *this, GstClockTime delay_tresho
 }
 
 void
+mprtpr_path_set_packetstracker(MpRTPRPath *this, void(*packetstracker)(gpointer,  GstMpRTPBuffer*), gpointer data)
+{
+  THIS_WRITELOCK(this);
+  this->packetstracker = packetstracker;
+  this->packetstracker_data = data;
+  THIS_WRITEUNLOCK(this);
+}
+
+void
 mprtpr_path_set_spike_var_treshold(MpRTPRPath *this, GstClockTime var_treshold)
 {
   THIS_WRITELOCK (this);
@@ -256,17 +193,6 @@ mprtpr_path_set_spike_var_treshold(MpRTPRPath *this, GstClockTime var_treshold)
   THIS_WRITEUNLOCK (this);
 }
 
-
-
-void mprtpr_path_get_joiner_stats(MpRTPRPath *this,
-                           gdouble       *path_delay,
-                           gdouble       *path_skew)
-{
-  THIS_READLOCK (this);
-  if(path_delay) *path_delay = this->path_avg_delay;
-  if(path_skew)  *path_skew = this->path_skew; //this->estimated_skew;
-  THIS_READUNLOCK (this);
-}
 
 void mprtpr_path_add_delay(MpRTPRPath *this, GstClockTime delay)
 {
@@ -290,6 +216,7 @@ mprtpr_path_process_rtp_packet (MpRTPRPath * this, GstMpRTPBuffer *mprtp)
   if (this->seq_initialized == FALSE) {
     this->highest_seq = mprtp->subflow_seq;
     this->total_packets_received = 1;
+    this->total_payload_received = mprtp->payload_bytes;
     this->last_rtp_timestamp = mprtp->timestamp;
     this->last_mprtp_delay = mprtp->delay;
     _add_delay(this, mprtp->delay);
@@ -302,17 +229,16 @@ mprtpr_path_process_rtp_packet (MpRTPRPath * this, GstMpRTPBuffer *mprtp)
   this->jitter += ((skew < 0?-1*skew:skew) - this->jitter) / 16;
   this->last_mprtp_delay = mprtp->delay;
   ++this->total_packets_received;
-
+  this->total_payload_received += mprtp->payload_bytes;
 
   //collect and evaluate skew in another way
   if(_cmp_seq32(this->last_rtp_timestamp, mprtp->timestamp) < 0){
     this->last_rtp_timestamp = mprtp->timestamp;
-    _add_skew(this, skew);
   }
   _add_delay(this, mprtp->delay);
 
   if(this->packetstracker){
-    packetsrcvtracker_add(this->packetstracker, mprtp);
+    this->packetstracker(this->packetstracker_data, mprtp);
   }
 
   //consider cycle num increase with allowance of a little gap
@@ -322,8 +248,6 @@ mprtpr_path_process_rtp_packet (MpRTPRPath * this, GstMpRTPBuffer *mprtp)
 
   //set the new packet seq as the highest seq
   this->highest_seq = mprtp->subflow_seq;
-
-
 
 done:
   THIS_WRITEUNLOCK(this);
@@ -344,25 +268,19 @@ _cmp_seq32 (guint32 x, guint32 y)
 void _add_delay(MpRTPRPath *this, GstClockTime delay)
 {
   GstClockTime ddelay;
-  gint64 median_delay;
-  percentiletracker_add(this->delays, delay);
-  median_delay = percentiletracker_get_stats(this->delays, NULL, NULL, NULL);
-  this->path_avg_delay = this->path_avg_delay * .99 + (gdouble) median_delay * .01;
-  if(this->path_avg_delay * 2. < delay){
-    this->urgent = TRUE;
-  }
 
-  ddelay = ABS(delay - this->last_added_delay);
+  ddelay = ABS((gint64)delay - (gint64)this->last_added_delay);
   if (ddelay > this->spike_delay_treshold) {
   // A new "delay spike" has started
     this->spike_mode = TRUE;
     this->spike_var = 0;
-  }else {
+  }else{
     if (this->spike_mode) {
       GstClockTime vdelay;
       // We're within a delay spike; maintain slope estimate
       this->spike_var = this->spike_var>>1;
-      vdelay = (ABS(delay - this->last_added_delay) + ABS(delay - this->last_last_added_delay))/8;
+      vdelay = (ABS((gint64)delay - (gint64)this->last_added_delay) +
+                ABS((gint64)delay - (gint64)this->last_last_added_delay))/8;
       this->spike_var = this->spike_var + vdelay;
       if (this->spike_var < this->spike_var_treshold) {
         // Slope is flat; return to normal operation
@@ -374,13 +292,6 @@ void _add_delay(MpRTPRPath *this, GstClockTime delay)
   this->last_added_delay = delay;
 }
 
-void _add_skew(MpRTPRPath *this, gint64 skew)
-{
-  gint64 median_skew;
-  percentiletracker2_add(this->skews, skew);
-  median_skew = percentiletracker2_get_stats(this->skews, NULL, NULL, NULL);
-  this->path_skew = this->path_skew * .99 + (gdouble) median_skew * .01;
-}
 
 
 #undef THIS_READLOCK

@@ -27,11 +27,9 @@
 #include <math.h>
 #include <gst/gst.h>
 #include <stdlib.h>
-#include "percentiletracker.h"
 #include <string.h>
 #include "streamsplitter.h"
 #include "sndctrler.h"
-#include "numstracker.h"
 
 
 GST_DEBUG_CATEGORY_STATIC (sndrate_distor_debug_category);
@@ -174,8 +172,8 @@ gint32 sndrate_distor_refresh(SendingRateDistributor* this)
     this->target_media_rate_t1 = this->target_media_rate;
     this->target_media_rate = 0;
     _iterate_subflows(this, _refresh_subflows_helper, this);
-    this->urgent_rescheduling |= this->target_media_rate_t1 * 1.1 < this->target_media_rate;
-    this->urgent_rescheduling |= this->target_media_rate < this->target_media_rate_t1 * .9;
+    this->urgent_rescheduling |= this->target_media_rate_t1 * 1.05 < this->target_media_rate;
+    this->urgent_rescheduling |= this->target_media_rate < this->target_media_rate_t1 * .95;
     this->last_subflow_refresh = _now(this);
   }
 

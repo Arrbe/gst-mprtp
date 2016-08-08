@@ -27,14 +27,19 @@
 #include "gstmprtcpbuffer.h"
 #include <math.h>
 #include <string.h>
-#include "bintree.h"
 #include "mprtpspath.h"
 #include "rtpfecbuffer.h"
+#include "lib_swplugins.h"
 
-#define THIS_READLOCK(this) g_rw_lock_reader_lock(&this->rwmutex)
-#define THIS_READUNLOCK(this) g_rw_lock_reader_unlock(&this->rwmutex)
-#define THIS_WRITELOCK(this) g_rw_lock_writer_lock(&this->rwmutex)
-#define THIS_WRITEUNLOCK(this) g_rw_lock_writer_unlock(&this->rwmutex)
+//#define THIS_READLOCK(this) g_rw_lock_reader_lock(&this->rwmutex)
+//#define THIS_READUNLOCK(this) g_rw_lock_reader_unlock(&this->rwmutex)
+//#define THIS_WRITELOCK(this) g_rw_lock_writer_lock(&this->rwmutex)
+//#define THIS_WRITEUNLOCK(this) g_rw_lock_writer_unlock(&this->rwmutex)
+
+#define THIS_READLOCK(this) g_mutex_lock(&this->mutex)
+#define THIS_READUNLOCK(this) g_mutex_unlock(&this->mutex)
+#define THIS_WRITELOCK(this) g_mutex_lock(&this->mutex)
+#define THIS_WRITEUNLOCK(this) g_mutex_unlock(&this->mutex)
 
 #define _now(this) gst_clock_get_time (this->sysclock)
 
@@ -70,7 +75,6 @@ static void packetssndqueue_finalize (GObject * object);
 //#define _trash_node(this, node) g_slice_free(PacketsSndQueueNode, node)
 #define _trash_node(this, node) g_free(node)
 
-static void _logging(gpointer data);
 //----------------------------------------------------------------------
 //--------- Private functions implementations to SchTree object --------
 //----------------------------------------------------------------------
@@ -101,19 +105,19 @@ packetssndqueue_finalize (GObject * object)
 void
 packetssndqueue_init (PacketsSndQueue * this)
 {
-  g_rw_lock_init (&this->rwmutex);
+//  g_rw_lock_init (&this->rwmutex);
+  g_mutex_init(&this->mutex);
+  g_cond_init(&this->cond);
   this->sysclock = gst_system_clock_obtain();
-  this->obsolation_treshold = 0;
-  this->incoming_bytes = make_numstracker(2048, GST_SECOND);
+  this->obsolation_treshold = GST_SECOND;
   this->items = g_queue_new();
-  mprtp_logger_add_logging_fnc(_logging,this, 10, &this->rwmutex);
+
 }
 
 
 void packetssndqueue_reset(PacketsSndQueue *this)
 {
   THIS_WRITELOCK(this);
-  numstracker_reset(this->incoming_bytes);
   THIS_WRITEUNLOCK(this);
 }
 
@@ -141,7 +145,8 @@ gint32 packetssndqueue_get_encoder_bitrate(PacketsSndQueue *this)
 {
   gint64 result;
   THIS_READLOCK(this);
-  numstracker_get_stats(this->incoming_bytes, &result);
+  result = 0;
+  g_warning("Encoder rate not tracked yet");
   THIS_READUNLOCK(this);
   return result * 8;
 }
@@ -187,6 +192,7 @@ void packetssndqueue_push(PacketsSndQueue *this, GstBuffer *buffer)
 
   this->bytes+=item->size;
   g_queue_push_tail(this->items, item);
+  g_cond_signal(&this->cond);
   THIS_WRITEUNLOCK(this);
 }
 
@@ -203,6 +209,17 @@ GstBuffer * packetssndqueue_pop(PacketsSndQueue *this)
   }
   THIS_WRITEUNLOCK(this);
   return result;
+}
+
+void packetssndqueue_wait_until_item(PacketsSndQueue *this)
+{
+  THIS_READLOCK(this);
+  if(!g_queue_is_empty(this->items)){
+    goto done;
+  }
+  g_cond_wait(&this->cond, &this->mutex);
+done:
+  THIS_READLOCK(this);
 }
 
 GstBuffer * packetssndqueue_peek(PacketsSndQueue *this)
@@ -229,23 +246,6 @@ done:
   return result;
 }
 
-void _logging(gpointer data)
-{
-  PacketsSndQueue *this = data;
-  mprtp_logger("packetssnqueue.log",
-               "----------------------------------------------------\n"
-               "Seconds: %lu\n"
-               "bytes in queue: %d \n"
-               "packets in queue: %d \n",
-
-               GST_TIME_AS_SECONDS(_now(this) - this->made),
-
-               this->bytes,
-               g_queue_get_length(this->items)
-
-               );
-
-}
 
 
 #undef DEBUG_PRINT_TOOLS

@@ -926,6 +926,8 @@ gst_mprtpsender_mprtp_sink_chain (GstPad * pad, GstObject * parent,
     _init_all_subflows(this, buf);
     this->dirty = FALSE;
   }
+
+
   n = g_list_length (this->subflows);
   if (n < 1) {
     GST_ERROR_OBJECT (this, "No appropiate subflow");
@@ -939,8 +941,9 @@ gst_mprtpsender_mprtp_sink_chain (GstPad * pad, GstObject * parent,
       outpad = subflow->async_outpad ? subflow->async_outpad : subflow->outpad;
     }else if(packet_type == PACKET_IS_MPRTP_FEC){
       outpad = this->async_fec && subflow->async_outpad ? subflow->async_outpad : subflow->outpad;
-    }else
+    }else{
       outpad = subflow->outpad;
+    }
   } else if (this->pivot_outpad != NULL &&
       gst_pad_is_active (this->pivot_outpad) &&
       gst_pad_is_linked (this->pivot_outpad)) {
@@ -1126,7 +1129,6 @@ _select_subflow (GstMprtpsender * this, guint8 id, Subflow ** result)
   *result = NULL;
   return FALSE;
 }
-
 
 
 #undef THIS_WRITELOCK

@@ -27,7 +27,6 @@
 #include "gstmprtcpbuffer.h"
 #include <math.h>
 #include <string.h>
-#include "bintree.h"
 #include "mprtpspath.h"
 
 #define THIS_READLOCK(this) g_rw_lock_reader_lock(&this->rwmutex)
@@ -146,11 +145,18 @@ void fecdecoder_reset(FECDecoder *this)
 }
 
 void fecdecoder_get_stat(FECDecoder *this,
+                         guint32 *total_rtp_packets,
                          guint32 *early_repaired_bytes,
                          guint32 *total_repaired_bytes,
-                         gdouble *FFRE)
+                         guint32 *total_recovered_packets,
+                         guint32 *total_missed_packets)
 {
   THIS_READLOCK(this);
+
+  if(total_rtp_packets){
+    *total_rtp_packets = this->total_rtp_packets;
+  }
+
   if(early_repaired_bytes){
     *early_repaired_bytes = this->total_early_repaired_bytes;
   }
@@ -159,13 +165,12 @@ void fecdecoder_get_stat(FECDecoder *this,
     *total_repaired_bytes = this->total_repaired_bytes;
   }
 
-  //frames recovery efficiency
-  if(FFRE){
-    if(!this->recovered && !this->lost){
-      *FFRE = 0.;
-    }else{
-      *FFRE = (gdouble)this->recovered / (gdouble)(this->recovered + this->lost);
-    }
+  if(total_recovered_packets){
+    *total_recovered_packets = this->recovered;
+  }
+
+  if(total_missed_packets){
+    *total_missed_packets = this->lost;
   }
 
   THIS_READUNLOCK(this);
@@ -257,7 +262,6 @@ void fecdecoder_add_fec_packet(FECDecoder *this, GstMpRTPBuffer *mprtp)
   GstRTPBuffer       rtp = GST_RTP_BUFFER_INIT;
 
   THIS_WRITELOCK(this);
-
   gst_rtp_buffer_map(mprtp->buffer, GST_MAP_READ, &rtp);
   payload = gst_rtp_buffer_get_payload(&rtp);
   payload_length = gst_rtp_buffer_get_payload_len(&rtp);
@@ -384,6 +388,7 @@ done:
 void _add_rtp_packet_to_segment(FECDecoder *this, GstMpRTPBuffer *mprtp, FECDecoderSegment *segment)
 {
   FECDecoderItem *item = NULL;
+  ++this->total_rtp_packets;
   if(_find_item_by_seq(segment->items, mprtp->abs_seq) != NULL){
       g_warning("Duplicated sequece number %hu for RTP packet", mprtp->abs_seq);
     goto done;

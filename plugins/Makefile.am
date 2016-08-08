@@ -14,26 +14,26 @@ libgstmprtp_la_SOURCES = gstmprtpplugin.c           \
                          streamsplitter.c           \
                          sndctrler.c                \
                          rcvctrler.c                \
-                         bintree.c                  \
-                         bintree2.c                 \
                          mprtplogger.c              \
                          packetssndqueue.c          \
                          packetsrcvqueue.c          \
                          ricalcer.c                 \
                          reportproc.c               \
                          reportprod.c               \
-                         percentiletracker.c        \
-                         percentiletracker2.c       \
                          sndratedistor.c            \
-                         numstracker.c              \
+                         fbrasubctrler.c            \
+                         fbrafbproc.c               \
+                         fbrafbprod.c               \
                          screamsubctrler.c          \
                          fecdec.c                   \
                          fecenc.c                   \
                          rtpfecbuffer.c             \
-                         packetssndtracker.c        \
-                         packetsrcvtracker.c        \
                          signalreport.c             \
-                         subratectrler.c
+                         slidingwindow.c            \
+                         lib_bintree.c              \
+                         lib_swplugins.c            \
+                         subratectrler.c            \
+                         fbratargetctrler.c
                     
                     
 noinst_HEADERS = mprtpspath.h           \
@@ -42,25 +42,22 @@ noinst_HEADERS = mprtpspath.h           \
                  mprtprpath.h           \
                  streamsplitter.h       \
                  streamjoiner.h         \
-                 bintree.h              \
-                 bintree2.h             \
                  mprtplogger.h          \
                  packetssndqueue.h      \
                  packetsrcvqueue.h      \
                  ricalcer.h             \
                  reportproc.h           \
                  reportprod.h           \
-                 percentiletracker.h    \
-                 percentiletracker2.h   \
                  sndratedistor.h        \
-                 numstracker.h          \
-                 screamsubctrler.h      \
+                 fbrasubctrler.h        \
+	             fbrafbproc.h           \
+	             fbrafbprod.h           \
+	             screamsubctrler.h      \
                  fecdec.h               \
                  fecenc.h               \
                  rtpfecbuffer.h         \
-                 packetssndtracker.h    \
-                 packetsrcvtracker.h    \
                  signalreport.h         \
+                 slidingwindow.h        \
                  subratectrler.h
                           
 
