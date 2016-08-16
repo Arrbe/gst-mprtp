@@ -194,9 +194,9 @@ static void _print_items(PercentileTracker2 *this)
     items[c] = this->items[i].value;
   }
   qsort (items, c, sizeof(gint64), _compare);
-  for(i=0; i<c; ++i) g_print("%-5lu ", items[i]);
+  for(i=0; i<c; ++i) g_print("%-5"G_GUINT64_FORMAT" ", items[i]);
   perc = percentiletracker2_get_stats(this, &min, &max, &sum);
-  g_print("Min: %lu, %dth percentile: %lu Max: %lu, Sum: %lu\n", min, this->percentile, perc, max, sum);
+  g_print("Min: %"G_GUINT64_FORMAT", %dth percentile: %"G_GUINT64_FORMAT" Max: %"G_GUINT64_FORMAT", Sum: %"G_GUINT64_FORMAT"\n", min, this->percentile, perc, max, sum);
   mprtp_free(items);
 }
 

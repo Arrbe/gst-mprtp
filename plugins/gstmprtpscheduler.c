@@ -281,7 +281,7 @@ gst_mprtpscheduler_class_init (GstMprtpschedulerClass * klass)
       g_param_spec_uint ("setup-sending-target",
           "set the sending target of the subflow",
           "A 32bit unsigned integer for setup a target. The first 8 bit identifies the subflow, the latter the target",
-          0, 4294967295, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
+          0, UINT_MAX, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
 
   g_object_class_install_property (gobject_class, PROP_SETUP_RTCP_INTERVAL_TYPE,
      g_param_spec_uint ("setup-rtcp-interval-type",
@@ -289,26 +289,26 @@ gst_mprtpscheduler_class_init (GstMprtpschedulerClass * klass)
                         "A 32bit unsigned integer for setup a target. The first 8 bit identifies the subflow, the latter the mode. "
                         "RTCP interval types: 0 - regular, 1 - early, 2 - immediate feedback",
                         0,
-                        4294967295, 2, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
+                        UINT_MAX, 2, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
 
   g_object_class_install_property (gobject_class, PROP_KEEP_ALIVE_PERIOD,
       g_param_spec_uint ("setup-keep-alive-period",
           "set a keep-alive period for subflow",
           "A 32bit unsigned integer for setup a target. The first 8 bit identifies the subflow, the latter the period in ms",
-          0, 4294967295, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
+          0, UINT_MAX, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
 
   g_object_class_install_property (gobject_class, PROP_SETUP_REPORT_TIMEOUT,
       g_param_spec_uint ("setup-report-timeout",
           "setup a timeout value for incoming reports on subflows",
           "A 32bit unsigned integer for setup a target. The first 8 bit identifies the subflow, the latter the timeout in ms",
-          0, 4294967295, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
+          0, UINT_MAX, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
 
   g_object_class_install_property (gobject_class, PROP_SETUP_CONTROLLING_MODE,
       g_param_spec_uint ("setup-controlling-mode",
           "set the controlling mode to the subflow",
           "A 32bit unsigned integer for setup a target. The first 8 bit identifies the subflow, the latter the mode. "
           "0 - no sending rate controller, 1 - no controlling, but sending SRs, 2 - FBRA with MARC",
-          0, 4294967295, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
+          0, UINT_MAX, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
 
   g_object_class_install_property (gobject_class, PROP_FEC_INTERVAL,
       g_param_spec_uint ("fec-interval",
