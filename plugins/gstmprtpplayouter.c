@@ -295,28 +295,28 @@ gst_mprtpplayouter_class_init (GstMprtpplayouterClass * klass)
                           "A 32bit unsigned integer upper 8bit in host order are used to identify the subflow. "
                           "If the value is 255 then the option will be applied on all subflow. The latter 24bits are identified as a value in ms",
                           0,
-                          4294967295, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
+                          UINT_MAX, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
 
   g_object_class_install_property (gobject_class, PROP_JOIN_MIN_TRESHOLD,
          g_param_spec_uint ("join-min-treshold",
                             "set the minimum treshold for streamjoiner in ms.",
                             "set the minimum treshold for streamjoiner in ms.",
                             0,
-                            4294967295, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
+                            UINT_MAX, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
 
     g_object_class_install_property (gobject_class, PROP_JOIN_MAX_TRESHOLD,
          g_param_spec_uint ("join-max-treshold",
                             "set the maximum treshold for streamjoiner in ms.",
                             "set the maxumum treshold for streamjoiner in ms.",
                             0,
-                            4294967295, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
+                            UINT_MAX, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
 
     g_object_class_install_property (gobject_class, PROP_JOIN_WINDOW_TRESHOLD,
          g_param_spec_uint ("join-window-treshold",
                             "set the window treshold for streamjoiner in seconds.",
                             "set the window treshold for streamjoiner in seconds.",
                             0,
-                            4294967295, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
+                            UINT_MAX, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
 
     g_object_class_install_property (gobject_class, PROP_JOIN_BETHA_FACTOR,
           g_param_spec_double ("join-betha-factor",
@@ -330,21 +330,21 @@ gst_mprtpplayouter_class_init (GstMprtpplayouterClass * klass)
                               "set the low watermark at playoutqueue.",
                               "set the low watermark at playoutqueue.",
                               0,
-                              4294967295, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
+                              UINT_MAX, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
 
       g_object_class_install_property (gobject_class, PROP_PLAYOUT_HIGH_WATERMARK,
            g_param_spec_uint ("playout-high-watermark",
                               "set the high watermark at playoutqueue.",
                               "set the high watermark at playoutqueue.",
                               0,
-                              4294967295, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
+                              UINT_MAX, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
 
       g_object_class_install_property (gobject_class, PROP_PLAYOUT_DESIRED_FRAMENUM,
            g_param_spec_uint ("playout-desired-framenum",
                               "set the desired frame num in the rcvqueue at playout.",
                               "set the desired frame num in the rcvqueue at playout.",
                               0,
-                              4294967295, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
+                              UINT_MAX, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
 
       g_object_class_install_property (gobject_class, PROP_SPIKE_DELAY_TRESHOLD,
            g_param_spec_uint ("spike-delay-treshold",
@@ -352,7 +352,7 @@ gst_mprtpplayouter_class_init (GstMprtpplayouterClass * klass)
                               "A 32bit unsigned integer upper 8bit in host order are used to identify the subflow. "
                               "If the value is 255 then the option will be applied on all subflow. The latter 24bits are identified as a value in ms",
                               0,
-                              4294967295, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
+                              UINT_MAX, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
 
       g_object_class_install_property (gobject_class, PROP_SPIKE_VAR_TRESHOLD,
            g_param_spec_uint ("spike-var-treshold",
@@ -360,7 +360,7 @@ gst_mprtpplayouter_class_init (GstMprtpplayouterClass * klass)
                               "A 32bit unsigned integer upper 8bit in host order are used to identify the subflow. "
                               "If the value is 255 then the option will be applied on all subflow. The latter 24bits are identified as a value in ms",
                               0,
-                              4294967295, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
+                              UINT_MAX, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
 
   g_object_class_install_property (gobject_class, PROP_SETUP_RTCP_INTERVAL_TYPE,
         g_param_spec_uint ("setup-rtcp-interval-type",
@@ -368,14 +368,14 @@ gst_mprtpplayouter_class_init (GstMprtpplayouterClass * klass)
                            "A 32bit unsigned integer for setup a target. The first 8 bit identifies the subflow, the latter the mode. "
                            "RTCP interval types: 0 - regular, 1 - early, 2 - immediate feedback",
                            0,
-                           4294967295, 2, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
+                           UINT_MAX, 2, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
 
   g_object_class_install_property (gobject_class, PROP_SETUP_CONTROLLING_MODE,
       g_param_spec_uint ("setup-controlling-mode",
           "set the controlling mode to the subflow",
           "A 32bit unsigned integer for setup a target. The first 8 bit identifies the subflow, the latter the mode. "
           "0 - no sending rate controller, 1 - no controlling, but sending SRs, 2 - FBRA with MARC",
-          0, 4294967295, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
+          0, UINT_MAX, 0, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
 
   element_class->change_state =
       GST_DEBUG_FUNCPTR (gst_mprtpplayouter_change_state);

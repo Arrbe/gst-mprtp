@@ -79,7 +79,7 @@ static void owd_logger(gpointer data, gchar* string)
   FBRAFBProcessor *this = data;
   THIS_READLOCK(this);
 
-  sprintf(string, "%lu,%lu,%lu,%lu\n",
+  sprintf(string, "%"G_GINT64_FORMAT",%"G_GINT64_FORMAT",%"G_GINT64_FORMAT",%"G_GINT64_FORMAT"\n",
                GST_TIME_AS_USECONDS(this->stat.owd_stt),
                GST_TIME_AS_USECONDS(this->stat.owd_ltt80),
                GST_TIME_AS_USECONDS(this->stat.RTT),

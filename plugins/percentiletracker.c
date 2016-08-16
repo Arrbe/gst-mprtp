@@ -212,9 +212,9 @@ static void _print_items(PercentileTracker *this)
     items[c] = this->items[i].value;
   }
   qsort (items, c, sizeof(guint64), _compare);
-  for(i=0; i<c; ++i) g_print("%-5lu ", items[i]);
+  for(i=0; i<c; ++i) g_print("%-5"G_GUINT64_FORMAT" ", items[i]);
   perc = percentiletracker_get_stats(this, &min, &max, &sum);
-  g_print("Min: %lu, %dth percentile: %lu Max: %lu, Sum: %lu\n", min, this->percentile, perc, max, sum);
+  g_print("Min: %"G_GUINT64_FORMAT", %dth percentile: %"G_GUINT64_FORMAT" Max: %"G_GUINT64_FORMAT", Sum: %"G_GUINT64_FORMAT"\n", min, this->percentile, perc, max, sum);
   mprtp_free(items);
 }
 
@@ -505,13 +505,13 @@ guint64 _get_median(PercentileTracker * this)
   guint64 result;
 
   if(this->Mnc == this->Mxc){
-//    g_print("mnc eq to mxc tops: %lu,%lu\n", bintree_get_top_value(this->maxtree), bintree_get_top_value(this->mintree));
+//    g_print("mnc eq to mxc tops: %"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT"\n", bintree_get_top_value(this->maxtree), bintree_get_top_value(this->mintree));
     result = (bintree_get_top_value(this->maxtree) + bintree_get_top_value(this->mintree))>>1;
   } else if(this->Mnc < this->Mxc){
-//      g_print("mnc st to mxc top is: %lu\n", bintree_get_top_value(this->maxtree));
+//      g_print("mnc st to mxc top is: %"G_GUINT64_FORMAT"\n", bintree_get_top_value(this->maxtree));
     result = bintree_get_top_value(this->maxtree);
   }else{
-//    g_print("mnc gt to mxc top is: %lu\n", bintree_get_top_value(this->mintree));
+//    g_print("mnc gt to mxc top is: %"G_GUINT64_FORMAT"\n", bintree_get_top_value(this->mintree));
     result = bintree_get_top_value(this->mintree);
   }
 

@@ -73,11 +73,11 @@ _print_tree (BinTree * tree, BinTreeNode* node, gint level)
     return;
   }
   if (!level)
-    g_print ("Tree %p TOP is: %lu Counter: %u\n", tree, tree->top?tree->top->value : 0,
+    g_print ("Tree %p TOP is: %"G_GUINT64_FORMAT" Counter: %u\n", tree, tree->top?tree->top->value : 0,
         tree->counter);
   for (i = 0; i < level && i < 10; ++i)
     g_print ("--");
-  g_print ("%d->%p->value:%lu ->ref: %u ->left:%p ->right:%p\n",
+  g_print ("%d->%p->value:%"G_GUINT64_FORMAT" ->ref: %u ->left:%p ->right:%p\n",
       level, node, node->value, node->ref, node->left, node->right);
   _print_tree (tree, node->left, level + 1);
   _print_tree (tree, node->right, level + 1);
@@ -288,7 +288,7 @@ gint64 bintree_get_bottom_value(BinTree *this)
   if(!this->bottom) result = 0;
   else result = this->bottom->value;
 //  if(this->bottom){
-//    g_print("\nbottom: %p->%lu\n", this, this->bottom->value);
+//    g_print("\nbottom: %p->%"G_GUINT64_FORMAT"\n", this, this->bottom->value);
 //  }
   THIS_READUNLOCK (this);
   return result;
@@ -324,7 +324,7 @@ void bintree_insert_value(BinTree* this, gint64 value)
 void bintree_delete_value(BinTree* this, gint64 value)
 {
   THIS_WRITELOCK (this);
-//  g_print("\ndelete: %p->%lu\n", this, value);
+//  g_print("\ndelete: %p->%"G_GUINT64_FORMAT"\n", this, value);
   _deref_from_tree(this, value);
   THIS_WRITEUNLOCK (this);
 }
@@ -392,7 +392,7 @@ BinTreeNode * _insert_into_tree(BinTree *this, BinTreeNode *actual, BinTreeNode 
   if (!actual) {++this->counter; return *insert;}
   cmp_result = this->cmp (actual->value, (*insert)->value);
   if (!cmp_result) {
-    GST_DEBUG_OBJECT (this, "DUPLICATED: %lu, %p will be merged and dropped",
+    GST_DEBUG_OBJECT (this, "DUPLICATED: %"G_GUINT64_FORMAT", %p will be merged and dropped",
                       (*insert)->value, *insert);
     actual->ref+=(*insert)->ref;
     _trash_bintreenode(this, *insert);
@@ -432,17 +432,17 @@ _deref_from_tree (BinTree * this, gint64 value)
   }
 
 not_found:
-  GST_DEBUG_OBJECT (this, "%lu NOT FOUND in %p\n", node->value, this);
-//  g_print("%lu NOT FOUND in %p\n", value, this);
+  GST_DEBUG_OBJECT (this, "%"G_GUINT64_FORMAT" NOT FOUND in %p\n", node->value, this);
+//  g_print("%"G_GUINT64_FORMAT" NOT FOUND in %p\n", value, this);
   return;
 survive:
-  GST_DEBUG_OBJECT (this, "%lu SURVIVE in %p\n", node->value, this);
-//  g_print("%lu SURVIVE in %p\n", node->value, this);
+  GST_DEBUG_OBJECT (this, "%"G_GUINT64_FORMAT" SURVIVE in %p\n", node->value, this);
+//  g_print("%"G_GUINT64_FORMAT" SURVIVE in %p\n", node->value, this);
   --node->ref;
   return;
 remove:
-  GST_DEBUG_OBJECT (this, "ELEMENT FOUND TO REMOVE: %lu\n", node->value);
-//  g_print("ELEMENT FOUND TO REMOVE: %lu\n", node->value);
+  GST_DEBUG_OBJECT (this, "ELEMENT FOUND TO REMOVE: %"G_GUINT64_FORMAT"\n", node->value);
+//  g_print("ELEMENT FOUND TO REMOVE: %"G_GUINT64_FORMAT"\n", node->value);
 //  g_print("PARENT: %p\n", parent);
   if (!parent)
     this->root = candidate;
@@ -454,8 +454,8 @@ remove:
   --this->counter;
   return;
 replace:
-//g_print("ELEMENT FOUND TO REPLACE: %lu->%lu\n", node->value, candidate->value);
-  GST_DEBUG_OBJECT (this, "ELEMENT FOUND TO REPLACE: %lu->%lu\n",
+//g_print("ELEMENT FOUND TO REPLACE: %"G_GUINT64_FORMAT"->%"G_GUINT64_FORMAT"\n", node->value, candidate->value);
+  GST_DEBUG_OBJECT (this, "ELEMENT FOUND TO REPLACE: %"G_GUINT64_FORMAT"->%"G_GUINT64_FORMAT"\n",
       node->value,
       candidate->value);
 
@@ -494,10 +494,10 @@ _pop_from_tree (BinTree * this, gint64 value)
     goto replace;
   }
 not_found:
-  GST_DEBUG_OBJECT (this, "ELEMENT NOT FOUND TO REMOVE: %lu\n", node->value);
+  GST_DEBUG_OBJECT (this, "ELEMENT NOT FOUND TO REMOVE: %"G_GUINT64_FORMAT"\n", node->value);
   return NULL;
 remove:
-  GST_DEBUG_OBJECT (this, "ELEMENT FOUND TO REMOVE: %lu\n", node->value);
+  GST_DEBUG_OBJECT (this, "ELEMENT FOUND TO REMOVE: %"G_GUINT64_FORMAT"\n", node->value);
   if (!parent)
     this->root = candidate;
   else if (parent->left == node)
@@ -510,7 +510,7 @@ remove:
   else if(candidate == this->bottom) _refresh_bottom(this);
   return node;
 replace:
-  GST_DEBUG_OBJECT (this, "ELEMENT FOUND TO REPLACE: %lu->%lu\n",
+  GST_DEBUG_OBJECT (this, "ELEMENT FOUND TO REPLACE: %"G_GUINT64_FORMAT"->%"G_GUINT64_FORMAT"\n",
       node->value,
       candidate->value);
   candidate = _pop_from_tree (this, candidate->value);

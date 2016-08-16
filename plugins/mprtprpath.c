@@ -257,10 +257,10 @@ gint
 _cmp_seq32 (guint32 x, guint32 y)
 {
   if(x == y) return 0;
-  if(x < y && y - x < 2147483648) return -1;
-  if(x > y && x - y > 2147483648) return -1;
-  if(x < y && y - x > 2147483648) return 1;
-  if(x > y && x - y < 2147483648) return 1;
+  if(x < y && y - x < 2147483648U) return -1;
+  if(x > y && x - y > 2147483648U) return -1;
+  if(x < y && y - x > 2147483648U) return 1;
+  if(x > y && x - y < 2147483648U) return 1;
   return 0;
 }
 

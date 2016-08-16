@@ -25,7 +25,7 @@
   start = _now(this); \
   func; \
   elapsed = GST_TIME_AS_MSECONDS(_now(this) - start); \
-  if(0 < elapsed) {g_print(msg" elapsed time in ms: %lu\n", elapsed); }\
+  if(0 < elapsed) {g_print(msg" elapsed time in ms: %"G_GUINT64_FORMAT"\n", elapsed); }\
 } \
 
 #endif /* PLUGINS_MPRTPDEFS_H_ */

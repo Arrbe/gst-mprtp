@@ -101,22 +101,22 @@ void swperctest(void)
 
 void swprinter_int32(gpointer data, gchar* string)
 {
-  sprintf(string, "%d", *(gint32*)data);
+  sprintf(string, "%"G_GINT32_FORMAT, *(gint32*)data);
 }
 
 void swprinter_uint32(gpointer data, gchar* string)
 {
-  sprintf(string, "%u", *(guint32*)data);
+  sprintf(string, "%"G_GUINT32_FORMAT, *(guint32*)data);
 }
 
 void swprinter_int64(gpointer data, gchar* string)
 {
-  sprintf(string, "%ld", *(gint64*)data);
+  sprintf(string, "%"G_GINT64_FORMAT, *(gint64*)data);
 }
 
 void swprinter_uint64(gpointer data, gchar* string)
 {
-  sprintf(string, "%lu", *(guint64*)data);
+  sprintf(string, "%"G_GUINT64_FORMAT, *(guint64*)data);
 }
 
 

@@ -414,7 +414,7 @@ void fbrasubctrler_time_update(FBRASubController *this)
   if(!_bcongestion(this) && this->last_fb_arrived < _now(this) - fbinterval_th){
     fbratargetctrler_break(this->targetctrler);
     _switch_stage_to(this, STAGE_KEEP, FALSE);
-    g_print("backward congestion fbinterval: %lu\n", fbinterval_th);
+    g_print("backward congestion fbinterval: %"G_GUINT64_FORMAT"\n", fbinterval_th);
     _bcongestion(this) = TRUE;
     goto done;
   }
