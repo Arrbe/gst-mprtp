@@ -8,10 +8,9 @@ let "LIMIT=$BW*37,5"
 LATENCY=100
 BURST=15400
 
-tc qdisc del dev "$VETH1" root
-tc qdisc add dev "$VETH1" root handle 1: netem delay "$LATENCY"ms
-tc qdisc add dev "$VETH1" parent 1: handle 2: tbf rate "$BW"kbit burst "$BURST" latency 300ms minburst 1540
-
+#tc qdisc del dev "$VETH1" root
+#tc qdisc add dev "$VETH1" root handle 1: netem delay "$LATENCY"ms
+#tc qdisc add dev "$VETH1" parent 1: handle 2: tbf rate "$BW"kbit burst "$BURST" latency 300ms minburst 1540
 
 VETH3="veth3"
 BW=1000
