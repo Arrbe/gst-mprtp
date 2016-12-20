@@ -182,3 +182,4 @@ AC_SUBST(GST_PLUGIN_LDFLAGS)
 
 AC_CONFIG_FILES([Makefile plugins/Makefile tools/Makefile tests/Makefile])
 AC_OUTPUT
+
