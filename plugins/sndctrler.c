@@ -28,7 +28,11 @@
 #include "gstmprtcpbuffer.h"
 #include <math.h>
 #include <string.h>
+#ifdef __APPLE__
+#include <sys/time.h>
+#else
 #include <sys/timex.h>
+#endif
 #include "ricalcer.h"
 #include "subratectrler.h"
 #include <stdlib.h>
@@ -403,8 +407,8 @@ sndctrler_rem_path (SndController *this, guint8 subflow_id)
     goto exit;
   }
   g_hash_table_remove (this->subflows, GINT_TO_POINTER (subflow_id));
-  if (--this->subflow_num < 0) {
-    this->subflow_num = 0;
+  if (this->subflow_num > 0) {
+    --this->subflow_num;
   }
 exit:
   THIS_WRITEUNLOCK (this);
